@@ -311,6 +311,8 @@ export class SessionService {
       id: String(session.id), guildDiscordId, name: String(session.name), status: session.status as SessionDto["status"],
       creatorDiscordUserId: String(session.creator_discord_user_id), revision: Number(session.revision),
       createdAt: Number(session.created_at), updatedAt: Number(session.updated_at),
+      settlingAt: session.settling_at === null ? null : Number(session.settling_at),
+      closedAt: session.closed_at === null ? null : Number(session.closed_at),
       members: members.map((member): MemberDto => ({
         id: String(member.id), discordUserId: String(member.discord_user_id), weight: Number(member.weight),
         fixedAdjustment: Number(member.fixed_adjustment), joinedAt: Number(member.joined_at), updatedAt: Number(member.updated_at),
