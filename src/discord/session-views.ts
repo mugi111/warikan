@@ -34,6 +34,8 @@ export function sessionDetailView(s: SessionDto, actor = "") {
   const embed = new EmbedBuilder().setTitle(safe(s.name, 256)).setDescription(`状態: ${s.status === "ACTIVE" ? "進行中" : s.status === "SETTLING" ? "精算中" : "完了"}\n参加者 ${active.length}人 · 支出 ${s.expenses.length}件\n作成者 <@${s.creatorDiscordUserId}>`).setFooter({ text: `更新番号 ${s.revision}` });
   const rows: ActionRowBuilder<any>[] = [];
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("参加者", id("members", s)), button("支出", id("expenses", s)), ...(s.status === "ACTIVE" ? [button("支出を追加", id("draft", s, "new"), ButtonStyle.Success)] : [])));
+  if (s.status === "ACTIVE") rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("精算プレビュー", id("preview", s), ButtonStyle.Primary)));
+  if (s.status !== "ACTIVE") rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("精算結果", id("settlement", s, ""), ButtonStyle.Primary), ...(s.status === "SETTLING" ? [button("リマインド", id("reminder", s), ButtonStyle.Secondary)] : [])));
   if (s.status === "ACTIVE" && s.creatorDiscordUserId === actor) rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("参加者設定", id("settings", s)), button("戻る", makeCustomId("list"))));
   else rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("戻る", makeCustomId("list"))));
   return { embeds: [embed], components: rows };

@@ -54,13 +54,13 @@ export async function handleSessionInteraction(service: SessionService, interact
   }
   if (action === "create" && interaction.isModalSubmit()) {
     await interaction.deferReply(privateReply);
-    try { const created = service.createSession({ guildDiscordId: guild, actorDiscordUserId: actor, name: interaction.fields.getTextInputValue("name").trim() }); await interaction.editReply({ ...sessionDetailView(created, actor), allowedMentions: mentions }); }
+      try { const created = service.createSession({ guildDiscordId: guild, actorDiscordUserId: actor, name: interaction.fields.getTextInputValue("name").trim() }); await interaction.editReply({ ...sessionDetailView(created, actor), allowedMentions: mentions }); }
     catch (error) { await interaction.editReply({ content: toUserError(error), embeds: [], components: [], allowedMentions: mentions }); }
     return;
   }
   if (action === "open" && interaction.isStringSelectMenu()) {
     const selected = interaction.values[0]; if (!selected) return acknowledgeError(interaction, "選択内容を確認できません。");
-    try { const opened = service.getSession({ guildDiscordId: guild, actorDiscordUserId: actor, sessionId: normalizeUuid(selected) }); await interaction.update({ ...sessionDetailView(opened), allowedMentions: mentions }); }
+    try { const opened = service.getSession({ guildDiscordId: guild, actorDiscordUserId: actor, sessionId: normalizeUuid(selected) }); await interaction.update({ ...sessionDetailView(opened, actor), allowedMentions: mentions }); }
     catch (error) { return acknowledgeError(interaction, toUserError(error)); } return;
   }
   if (!sessionId) return acknowledgeError(interaction, "セッションを確認できません。");
@@ -104,7 +104,7 @@ export async function handleSessionInteraction(service: SessionService, interact
         if (settingsByMember.size === 0) throw new ApplicationError("INVALID_INPUT", "Add a participant before changing settings.");
         const settings = [...settingsByMember.values()];
         const updated = service.updateMemberSettings(scope, settings, { expectedRevision: revision });
-        await interaction.editReply({ ...sessionDetailView(updated), allowedMentions: mentions }); return;
+        await interaction.editReply({ ...sessionDetailView(updated, actor), allowedMentions: mentions }); return;
       }
       if (action === "create") throw new Error("Invalid creation context");
       throw new ApplicationError("INVALID_INPUT", "Unsupported form.");
@@ -126,7 +126,7 @@ export async function handleSessionInteraction(service: SessionService, interact
     const draft = drafts.get(token ?? "", actor, guild, session.id, revision);
     if (!draft || draft.generation.toString(36) !== generation) return acknowledgeError(interaction, "入力画面の期限が切れました。開き直してください。");
     if (action === "fields") { await interaction.showModal(fieldsModal(makeCustomId("fields", session.id, revision, `${draft.token}_${draft.generation.toString(36)}`), draft.title, draft.amount)); return; }
-    if (action === "cancel") { drafts.delete(draft.token); await interaction.update({ ...sessionDetailView(session), allowedMentions: mentions }); return; }
+    if (action === "cancel") { drafts.delete(draft.token); await interaction.update({ ...sessionDetailView(session, actor), allowedMentions: mentions }); return; }
     if (action === "save") {
       const amount = /^\d+$/.test(draft.amount) ? Number(draft.amount) : NaN;
       if (!draft.title || !Number.isSafeInteger(amount) || amount <= 0 || !draft.payer) return acknowledgeError(interaction, "支出名、正の金額、支払者を入力してください。");
