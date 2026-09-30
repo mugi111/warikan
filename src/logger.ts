@@ -22,7 +22,7 @@ function sanitize(value: unknown, key = ""): unknown {
 
 function write(level: LogLevel, message: string, fields: LogFields = {}): void {
   if (priorities[level] < priorities[logLevel]) return;
-  const entry = JSON.stringify({ timestamp: new Date().toISOString(), level, message, ...sanitize(fields) as LogFields });
+  const entry = JSON.stringify({ ...sanitize(fields) as LogFields, timestamp: new Date().toISOString(), level, message: sanitize(message) });
   if (level === "error") console.error(entry);
   else if (level === "warn") console.warn(entry);
   else console.log(entry);

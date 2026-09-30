@@ -25,6 +25,7 @@ function positiveInteger(value: number, field: string): void {
 export async function backupDatabase(options: BackupOptions): Promise<BackupResult> {
   positiveInteger(options.retentionCount, "retentionCount");
   positiveInteger(options.timeoutSeconds, "timeoutSeconds");
+  if (options.timeoutSeconds > 240) throw new Error("timeoutSeconds must not exceed 240.");
   if (options.databasePath === ":memory:") throw new Error("A file-backed database is required for backups.");
 
   const databasePath = resolve(options.databasePath);

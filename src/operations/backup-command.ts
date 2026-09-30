@@ -10,6 +10,7 @@ function positiveInteger(name: string, fallback: number): number {
   if (!/^[1-9]\d*$/.test(raw.trim())) throw new Error(`${name} must be a positive integer.`);
   const value = Number(raw);
   if (!Number.isSafeInteger(value)) throw new Error(`${name} must be a positive safe integer.`);
+  if (name === "BACKUP_TIMEOUT_SECONDS" && value > 240) throw new Error(`${name} must not exceed 240.`);
   return value;
 }
 
