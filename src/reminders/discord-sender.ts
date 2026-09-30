@@ -17,15 +17,25 @@ export class DiscordReminderSender implements ReminderSender {
 
   async send(notice: ReminderNotice, revalidateSyncCallback: () => boolean): Promise<{ messageId: string } | null> {
     if (!revalidateSyncCallback()) return null;
-    const channel = await this.client.channels.fetch(notice.channelId);
+    let channel;
+    try {
+      channel = await this.client.channels.fetch(notice.channelId);
+    } catch (error) {
+      const status = typeof error === "object" && error !== null && "status" in error ? Number(error.status) : 0;
+      throw new ReminderDeliveryError("REMINDER_CHANNEL_FETCH_FAILED", status === 429 || status >= 500);
+    }
     if (!channel || !channel.isTextBased() || !("send" in channel)) {
       throw new ReminderDeliveryError("REMINDER_CHANNEL_UNAVAILABLE", false);
     }
+    if (!("guildId" in channel) || channel.guildId !== notice.guildDiscordId) {
+      throw new ReminderDeliveryError("REMINDER_CHANNEL_GUILD_MISMATCH", false);
+    }
+    const sessionName = notice.sessionName.replace(/[\\`*_{}\[\]()#+\-.!|>~]/g, "\\$&");
     const sections = notice.groups.map((group) => {
       const payments = group.transfers.map((transfer) => `  ${transfer.recipientDiscordUserId}: ${transfer.amount}`).join("\n");
       return `<@${group.senderDiscordUserId}>\n${payments}`;
     });
-    const content = `未払いの精算リマインド: ${notice.sessionName} (settlement v${notice.settlementVersion})\n\n${sections.join("\n\n")}`;
+    const content = `未払いの精算リマインド: ${sessionName} (settlement v${notice.settlementVersion})\n\n${sections.join("\n\n")}`;
     if (content.length > 2000) throw new ReminderDeliveryError("REMINDER_MESSAGE_TOO_LONG", false);
     if (!revalidateSyncCallback()) return null;
     try {
@@ -36,7 +46,7 @@ export class DiscordReminderSender implements ReminderSender {
       return { messageId: message.id };
     } catch (error) {
       const status = typeof error === "object" && error !== null && "status" in error ? Number(error.status) : 0;
-      throw new ReminderDeliveryError(error instanceof Error ? error.message : "DISCORD_SEND_FAILED", status === 429 || status >= 500);
+      throw new ReminderDeliveryError(`DISCORD_SEND_FAILED_${status || "UNKNOWN"}`, status === 429 || status >= 500);
     }
   }
 }
