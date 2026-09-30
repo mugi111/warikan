@@ -7,7 +7,7 @@ import { SessionService } from "../application/session-service.js";
 import type { MemberSettingsInput, SessionDto } from "../application/types.js";
 import { makeCustomId, parseCustomId } from "./custom-id.js";
 import { ExpenseDraftStore } from "./expense-drafts.js";
-import { expenseDetailView, expenseDraftView, expenseListView, fieldsModal, memberView, sessionDetailView, sessionListView, settingsModal } from "./session-views.js";
+import { expenseDetailView, expenseDraftView, expenseListView, fieldsModal, memberView, renameSessionModal, sessionDetailView, sessionListView, settingsModal } from "./session-views.js";
 
 const drafts = new ExpenseDraftStore();
 const mentions = { parse: [] as never[] };
@@ -70,7 +70,7 @@ export async function handleSessionInteraction(service: SessionService, interact
   catch (error) { return acknowledgeError(interaction, toUserError(error)); }
   if (session.revision !== revision && action !== "open") return acknowledgeError(interaction, "セッションが更新されています。最新の画面を開き直してください。");
   if (interaction.isModalSubmit()) {
-    if (action === "fields" || action === "settings") await interaction.deferUpdate();
+    if (action === "fields" || action === "settings" || action === "rename") await interaction.deferUpdate();
     else await interaction.deferReply(privateReply);
     try {
       if (action === "fields") {
@@ -105,6 +105,12 @@ export async function handleSessionInteraction(service: SessionService, interact
         const settings = [...settingsByMember.values()];
         const updated = service.updateMemberSettings(scope, settings, { expectedRevision: revision });
         await interaction.editReply({ ...sessionDetailView(updated, actor), allowedMentions: mentions }); return;
+      }
+      if (action === "rename") {
+        if (session.creatorDiscordUserId !== actor || session.status !== "ACTIVE") throw new ApplicationError("FORBIDDEN", "Only the creator can rename an active session.");
+        const name = interaction.fields.getTextInputValue("name").trim();
+        const updated = service.renameSession(scope, name, { expectedRevision: revision });
+        await interaction.editReply({ ...sessionDetailView(updated, actor), content: "セッション名を変更しました。", allowedMentions: mentions }); return;
       }
       if (action === "create") throw new Error("Invalid creation context");
       throw new ApplicationError("INVALID_INPUT", "Unsupported form.");
@@ -151,6 +157,10 @@ export async function handleSessionInteraction(service: SessionService, interact
   if (action === "settings") {
     if (session.creatorDiscordUserId !== actor || session.status !== "ACTIVE") return acknowledgeError(interaction, "対象を確認できませんでした。");
     await interaction.showModal(settingsModal(makeCustomId("settings", session.id, revision), session)); return;
+  }
+  if (action === "rename") {
+    if (session.creatorDiscordUserId !== actor || session.status !== "ACTIVE") return acknowledgeError(interaction, "対象を確認できませんでした。");
+    await interaction.showModal(renameSessionModal(makeCustomId("rename", session.id, revision), session.name)); return;
   }
   if (["members", "mpage", "expenses", "epage", "expense"].includes(action)) {
     if (action === "expense" && interaction.isStringSelectMenu()) {
