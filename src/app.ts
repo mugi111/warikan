@@ -5,8 +5,11 @@ import {
   type ChatInputCommandInteraction
 } from "discord.js";
 import type Database from "better-sqlite3";
+import { ReminderService } from "./application/reminder-service.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
+import { DiscordReminderSender } from "./reminders/discord-sender.js";
+import { ReminderWorker } from "./reminders/worker.js";
 
 export interface Application {
   start(): Promise<void>;
@@ -15,9 +18,15 @@ export interface Application {
 
 export function createApplication(database: Database.Database): Application {
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const reminderWorker = new ReminderWorker(new ReminderService(database), new DiscordReminderSender(client));
 
   client.on(Events.ClientReady, (readyClient) => {
     logger.info("Discord client ready", { userId: readyClient.user.id });
+    try {
+      reminderWorker.start();
+    } catch (error) {
+      logger.error("Reminder worker failed to start", { error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -34,6 +43,7 @@ export function createApplication(database: Database.Database): Application {
       await client.login(config.discordToken);
     },
     async stop() {
+      await reminderWorker.stop();
       client.destroy();
       if (database.open) database.close();
       logger.info("Application stopped");

@@ -104,10 +104,14 @@ export class SettlementService {
       if (session.status !== "SETTLING") fail("SESSION_NOT_SETTLING", "The session is not settling.");
       const current = this.database.prepare("SELECT id FROM settlements WHERE id = ? AND session_id = ? AND status = 'FINALIZED'").get(id, session.id);
       if (!current) fail("SETTLEMENT_NOT_CURRENT", "The settlement is not current.");
-      const row = this.database.prepare(`SELECT id, from_member_id, to_member_id, status FROM settlement_transfers
-        WHERE id = ? AND session_id = ? AND settlement_id = ?`).get(transfer, session.id, id) as Row | undefined;
+      const row = this.database.prepare(`SELECT t.id, t.status, sender.discord_user_id AS sender_discord_user_id,
+          recipient.discord_user_id AS recipient_discord_user_id
+        FROM settlement_transfers t
+        JOIN session_members sender ON sender.id = t.from_member_id AND sender.session_id = t.session_id
+        JOIN session_members recipient ON recipient.id = t.to_member_id AND recipient.session_id = t.session_id
+        WHERE t.id = ? AND t.session_id = ? AND t.settlement_id = ?`).get(transfer, session.id, id) as Row | undefined;
       if (!row) fail("TRANSFER_NOT_FOUND", "Transfer not found.");
-      if (row.from_member_id !== actor && row.to_member_id !== actor && session.creator_discord_user_id !== actor) fail("FORBIDDEN", "Only the creator or a transfer participant can change transfer status.");
+      if (row.sender_discord_user_id !== actor && row.recipient_discord_user_id !== actor && session.creator_discord_user_id !== actor) fail("FORBIDDEN", "Only the creator or a transfer participant can change transfer status.");
       if (row.status !== status) {
         const timestamp = this.now();
         this.database.prepare("UPDATE settlement_transfers SET status = ?, paid_at = ?, updated_at = ? WHERE id = ? AND session_id = ? AND settlement_id = ?")

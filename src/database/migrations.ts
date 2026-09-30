@@ -2,8 +2,9 @@ import type Database from "better-sqlite3";
 import type { Migration } from "./types.js";
 import { initialSchemaMigration } from "./migrations/001-initial-schema.js";
 import { sessionLifecycleMigration } from "./migrations/002-session-lifecycle.js";
+import { durableRemindersMigration } from "./migrations/003-durable-reminders.js";
 
-const migrations: readonly Migration[] = [initialSchemaMigration, sessionLifecycleMigration];
+const migrations: readonly Migration[] = [initialSchemaMigration, sessionLifecycleMigration, durableRemindersMigration];
 
 export function runMigrations(database: Database.Database): void {
   const bootstrap = database.transaction(() => {
@@ -26,16 +27,17 @@ export function runMigrations(database: Database.Database): void {
   });
   bootstrap.immediate();
 
-  const hasLifecycle = database.prepare("SELECT 1 FROM schema_migrations WHERE version = 2").get();
-  if (!hasLifecycle) {
+  for (const migration of migrations.slice(1)) {
+    const applied = database.prepare("SELECT 1 FROM schema_migrations WHERE version = ?").get(migration.version);
+    if (applied) continue;
     database.pragma("foreign_keys = OFF");
     try {
       const migrate = database.transaction(() => {
-        sessionLifecycleMigration.up(database);
+        migration.up(database);
         const violations = database.pragma("foreign_key_check") as Array<Record<string, unknown>>;
         if (violations.length) throw new Error(`Database migration produced ${violations.length} foreign key violation(s)`);
         database.prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)")
-          .run(sessionLifecycleMigration.version, sessionLifecycleMigration.name, Date.now());
+          .run(migration.version, migration.name, Date.now());
       });
       migrate.immediate();
     } finally {
