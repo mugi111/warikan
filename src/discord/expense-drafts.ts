@@ -9,6 +9,7 @@ export interface ExpenseDraft {
 
 export class ExpenseDraftStore {
   private readonly drafts = new Map<string, ExpenseDraft>();
+  private readonly maxDrafts = 500;
 
   create(owner: string, guild: string, session: SessionDto, expense?: ExpenseDto): ExpenseDraft {
     this.sweep();
@@ -21,6 +22,11 @@ export class ExpenseDraftStore {
       allEligible: !expense, generation: 0, expiresAt: Date.now() + 15 * 60_000,
     };
     this.drafts.set(draft.token, draft);
+    while (this.drafts.size > this.maxDrafts) {
+      const oldest = this.drafts.keys().next().value;
+      if (oldest === undefined) break;
+      this.drafts.delete(oldest);
+    }
     return draft;
   }
 

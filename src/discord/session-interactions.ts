@@ -31,6 +31,7 @@ export async function handleSessionInteraction(service: SessionService, interact
     return;
   }
   if (!interaction.isMessageComponent() && !interaction.isModalSubmit()) return;
+  if (!interaction.customId.startsWith("wk1:")) return;
   if (!interaction.inGuild() || !interaction.guildId) {
     if (interaction.isModalSubmit()) await interaction.reply({ ...privateReply, content: "サーバー内で実行してください。" });
     else await interaction.reply({ ...privateReply, content: "サーバー内で実行してください。" });
@@ -85,16 +86,23 @@ export async function handleSessionInteraction(service: SessionService, interact
         if (session.creatorDiscordUserId !== actor) throw new ApplicationError("FORBIDDEN", "Only the creator can edit settings.");
         const rows = interaction.fields.getTextInputValue("settings").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
         const active = session.members.filter((m) => !m.removedAt);
-        const settings: MemberSettingsInput[] = rows.map((line) => {
+        const settingsByMember = new Map<string, MemberSettingsInput>(active.map((member) => [member.id, {
+          memberId: member.id, weight: member.weight, fixedAdjustment: member.fixedAdjustment,
+        }]));
+        const touched = new Set<string>();
+        for (const line of rows) {
           const match = /^(?:<@!?(\d+)>|(\d+))\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(-?\d+)$/.exec(line);
           if (!match) throw new ApplicationError("INVALID_INPUT", "Invalid member settings line.");
           const member = active.find((m) => m.discordUserId === (match[1] ?? match[2]));
           if (!member) throw new ApplicationError("MEMBER_NOT_FOUND", "Unknown active member.");
+          if (touched.has(member.id)) throw new ApplicationError("DUPLICATE_MEMBER", "Member settings must not contain duplicates.");
           const weight = Number(match[3]); const fixedAdjustment = Number(match[4]);
           if (!Number.isFinite(weight) || weight <= 0 || !Number.isSafeInteger(fixedAdjustment)) throw new ApplicationError("INVALID_INPUT", "Invalid settings values.");
-          return { memberId: member.id, weight, fixedAdjustment };
-        });
-        if (settings.length !== active.length) throw new ApplicationError("INVALID_INPUT", "Include each active member exactly once.");
+          touched.add(member.id);
+          settingsByMember.set(member.id, { memberId: member.id, weight, fixedAdjustment });
+        }
+        if (settingsByMember.size === 0) throw new ApplicationError("INVALID_INPUT", "Add a participant before changing settings.");
+        const settings = [...settingsByMember.values()];
         const updated = service.updateMemberSettings(scope, settings, { expectedRevision: revision });
         await interaction.editReply({ ...sessionDetailView(updated), allowedMentions: mentions }); return;
       }

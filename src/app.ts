@@ -35,7 +35,7 @@ export function createApplication(database: Database.Database): Application {
     try {
       await handleSessionInteraction(sessionService, interaction);
     } catch (error) {
-      logger.error("Interaction handler failed", { error: error instanceof Error ? error.message : String(error) });
+      logger.error("Interaction handler failed", { errorType: error instanceof Error ? error.name : "unknown" });
       if (interaction.isRepliable()) {
         const response = { content: "操作を完了できませんでした。時間をおいて再試行してください。", ephemeral: true, allowedMentions: { parse: [] } };
         if (interaction.deferred || interaction.replied) await interaction.followUp(response).catch(() => undefined);

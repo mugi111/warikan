@@ -92,6 +92,12 @@ export function fieldsModal(customId: string, title = "", amount = ""): ModalBui
 }
 
 export function settingsModal(customId: string, s: SessionDto): ModalBuilder {
-  const values = s.members.filter((m) => !m.removedAt).map((m) => `${m.discordUserId}, ${m.weight}, ${m.fixedAdjustment}`).join("\n").slice(0, 4000);
-  return new ModalBuilder().setCustomId(customId).setTitle("参加者の負担設定").addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("settings").setLabel("user ID, weight, fixed amount per line").setStyle(TextInputStyle.Paragraph).setMaxLength(4000).setValue(values).setRequired(true)));
+  const lines: string[] = [];
+  for (const member of s.members.filter((m) => !m.removedAt)) {
+    const line = `${member.discordUserId}, ${member.weight}, ${member.fixedAdjustment}`;
+    if (lines.join("\n").length + line.length + 1 > 3600) break;
+    lines.push(line);
+  }
+  const values = lines.join("\n") || "0, 1, 0";
+  return new ModalBuilder().setCustomId(customId).setTitle("参加者の負担設定").addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("settings").setLabel("ユーザーID, Weight, 固定調整額（他の人は変更なし）").setStyle(TextInputStyle.Paragraph).setMaxLength(4000).setValue(values).setRequired(true)));
 }
