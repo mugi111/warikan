@@ -7,17 +7,18 @@ const rest = new REST().setToken(config.discordToken);
 
 try {
   const commands = [warikanCommand.toJSON()];
-  const registered = await rest.put(
-    Routes.applicationGuildCommands(config.discordApplicationId, config.discordGuildId),
-    { body: commands }
-  );
-  logger.info("Guild commands registered", {
+  const route = config.discordGuildId
+    ? Routes.applicationGuildCommands(config.discordApplicationId, config.discordGuildId)
+    : Routes.applicationCommands(config.discordApplicationId);
+  const registered = await rest.put(route, { body: commands });
+  logger.info("Discord commands registered", {
     count: Array.isArray(registered) ? registered.length : commands.length,
-    guildId: config.discordGuildId
+    scope: config.discordGuildId ? "guild" : "global",
+    ...(config.discordGuildId ? { guildId: config.discordGuildId } : {})
   });
 } catch (error) {
-  logger.error("Guild command registration failed", {
-    error: error instanceof Error ? error.message : String(error)
+  logger.error("Discord command registration failed", {
+    errorType: error instanceof Error ? error.name : "unknown"
   });
   process.exitCode = 1;
 }

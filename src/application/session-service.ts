@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import { calculateSettlement } from "../domain/settlement/calculator.js";
 import { SettlementCalculationError } from "../domain/settlement/errors.js";
 import { ApplicationError } from "./errors.js";
+import { logger } from "../logger.js";
 import type {
   CreateSessionInput, ExpenseDto, ExpenseInput, MemberDto, MemberSettingsInput,
   RevisionOptions, SessionDto, ServiceScope,
@@ -53,7 +54,7 @@ export class SessionService {
     const guildDiscordId = text(input.guildDiscordId, "guildDiscordId");
     const actor = text(input.actorDiscordUserId, "actorDiscordUserId");
     const name = text(input.name, "name");
-    return this.transaction(() => {
+    const session = this.transaction(() => {
       const timestamp = this.now();
       let guild = this.database.prepare("SELECT id FROM guilds WHERE discord_guild_id = ?").get(guildDiscordId) as Row | undefined;
       if (!guild) {
@@ -71,6 +72,8 @@ export class SessionService {
         VALUES (?, ?, ?, 1, 0, ?, ?)`).run(this.createId(), sessionId, actor, timestamp, timestamp);
       return this.readSession(guildDiscordId, sessionId);
     });
+    logger.info("Session created", { sessionId: session.id, guildDiscordId, actorDiscordUserId: actor });
+    return session;
   }
 
   listSessions(guildDiscordId: string, actorDiscordUserId: string): SessionDto[] {

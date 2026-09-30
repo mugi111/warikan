@@ -4,6 +4,7 @@ import { calculateSettlement } from "../domain/settlement/calculator.js";
 import { SettlementCalculationError } from "../domain/settlement/errors.js";
 import type { SettlementCalculation } from "../domain/settlement/types.js";
 import { ApplicationError } from "./errors.js";
+import { logger } from "../logger.js";
 import type { ServiceScope } from "./types.js";
 
 type Row = Record<string, unknown>;
@@ -63,7 +64,7 @@ export class SettlementService {
   }
 
   finalize(scope: ServiceScope, options: { expectedRevision: number }): SettlementMutationResult {
-    return this.transaction(() => {
+    const result = this.transaction(() => {
       const { session, actor } = this.authorized(scope, true, options.expectedRevision);
       if (session.status !== "ACTIVE") fail("SESSION_NOT_ACTIVE", "The session is not active.");
       const existing = this.database.prepare("SELECT 1 FROM settlements WHERE session_id = ? AND status = 'FINALIZED'").get(session.id);
@@ -81,6 +82,8 @@ export class SettlementService {
       this.bumpSession(sessionId, session.revision, timestamp, "SETTLING", timestamp, null);
       return { settlement: this.readSettlement(sessionId, settlementId), sessionRevision: Number(session.revision) + 1, becameAllPaid: calculation.transfers.length === 0 };
     });
+    logger.info("Settlement finalized", { sessionId: result.settlement.sessionId, settlementId: result.settlement.id, version: result.settlement.version, transferCount: result.settlement.transfers.length });
+    return result;
   }
 
   invalidate(scope: ServiceScope, settlementId: string, options: { expectedRevision: number }): SettlementMutationResult {

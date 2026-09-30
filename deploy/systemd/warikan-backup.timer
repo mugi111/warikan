@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule daily Warikan SQLite backups
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=warikan-backup.service
+
+[Install]
+WantedBy=timers.target

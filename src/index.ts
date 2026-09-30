@@ -13,7 +13,12 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info("Shutdown signal received", { signal });
-    await application.stop();
+    try {
+      await application.stop();
+    } catch (error) {
+      logger.error("Application shutdown failed", { signal, errorType: error instanceof Error ? error.name : "unknown" });
+      process.exitCode = 1;
+    }
   };
 
   process.once("SIGINT", () => void shutdown("SIGINT"));
@@ -22,14 +27,16 @@ async function main(): Promise<void> {
   try {
     await application.start();
   } catch (error) {
-    await application.stop();
+    await application.stop().catch((stopError: unknown) => {
+      logger.error("Application shutdown failed", { errorType: stopError instanceof Error ? stopError.name : "unknown" });
+    });
     throw error;
   }
 }
 
 main().catch((error: unknown) => {
   logger.error("Application startup failed", {
-    error: error instanceof Error ? error.message : String(error)
+    errorType: error instanceof Error ? error.name : "unknown"
   });
   process.exitCode = 1;
 });
