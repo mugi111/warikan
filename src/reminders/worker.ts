@@ -1,4 +1,4 @@
-import type { ReminderClaim, ReminderService } from "../application/reminder-service.js";
+import type { ReminderService } from "../application/reminder-service.js";
 import { logger } from "../logger.js";
 import { ReminderDeliveryError, type ReminderSender } from "./discord-sender.js";
 
@@ -8,7 +8,6 @@ export class ReminderWorker {
   private timer: NodeJS.Timeout | undefined;
   private activePoll: Promise<void> | undefined;
   private running = false;
-  private readonly manualQueue: ReminderClaim[] = [];
 
   constructor(private readonly service: ReminderService, private readonly sender: ReminderSender) {}
 
@@ -28,12 +27,6 @@ export class ReminderWorker {
     await this.activePoll;
   }
 
-  queueManual(claim: ReminderClaim): void {
-    if (claim.deliveryKind !== "MANUAL") throw new Error("Only manual reminders can be queued here.");
-    this.manualQueue.push(claim);
-    this.schedulePoll();
-  }
-
   private schedulePoll(): void {
     if (!this.running || this.activePoll) return;
     this.activePoll = this.poll().catch((error: unknown) => {
@@ -45,7 +38,7 @@ export class ReminderWorker {
     while (this.running) {
       let claim;
       try {
-        claim = this.manualQueue.shift() ?? this.service.claimNext();
+        claim = this.service.claimNext();
       } catch (error) {
         logger.error("Reminder claim failed", { errorType: error instanceof Error ? error.name : "unknown" });
         return;

@@ -6,12 +6,9 @@ import type { ServiceScope } from "./types.js";
 type Row = Record<string, unknown>;
 type Clock = () => number;
 type IdFactory = () => string;
-export const MIN_REMINDER_INTERVAL_SECONDS = 3600;
-export const DEFAULT_REMINDER_INTERVAL_SECONDS = 86400;
-
 export interface ReminderSettingDto {
   id: string; sessionId: string; settlementId: string; enabled: boolean; channelId: string;
-  firstReminderAt: number; intervalSeconds: number; nextReminderAt: number | null;
+  firstReminderAt: number; nextReminderAt: number | null;
   lastReminderAt: number | null; updatedAt: number;
 }
 export interface ReminderNotice {
@@ -20,7 +17,7 @@ export interface ReminderNotice {
   groups: Array<{ senderDiscordUserId: string; transfers: Array<{ transferId: string; recipientDiscordUserId: string; amount: number }> }>;
 }
 export interface ReminderClaim { logId: string; deliveryKind: "AUTO" | "MANUAL"; notice: ReminderNotice; }
-export interface ConfigureReminderInput { channelId: string; firstReminderAt?: number; intervalSeconds?: number; }
+export interface ConfigureReminderInput { channelId: string; firstReminderAt: number; }
 
 function fail(code: ConstructorParameters<typeof ApplicationError>[0], message: string, context: Readonly<Record<string, string | number>> = {}): never {
   throw new ApplicationError(code, message, context);
@@ -49,29 +46,26 @@ export class ReminderService {
 
   configure(scope: ServiceScope, input: ConfigureReminderInput): ReminderSettingDto {
     const channelId = text(input.channelId, "channelId");
-    const intervalSeconds = input.intervalSeconds ?? DEFAULT_REMINDER_INTERVAL_SECONDS;
-    if (!Number.isSafeInteger(intervalSeconds) || intervalSeconds < MIN_REMINDER_INTERVAL_SECONDS) {
-      fail("INVALID_INPUT", `intervalSeconds must be at least ${MIN_REMINDER_INTERVAL_SECONDS}.`);
-    }
-    const providedFirstAt = input.firstReminderAt === undefined ? undefined : safeTimestamp(input.firstReminderAt, "firstReminderAt");
+    const firstAt = safeTimestamp(input.firstReminderAt, "firstReminderAt");
     return this.transaction(() => {
       const { session } = this.authorized(scope, true);
       const settlementId = this.assertCurrentSettling(session);
       this.assertUnpaid(String(session.id), settlementId);
       const timestamp = safeTimestamp(this.now(), "now");
-      const firstReminderAt = providedFirstAt ?? this.checkedAdd(timestamp, intervalSeconds * 1000, "firstReminderAt");
-      const nextReminderAt = Math.max(firstReminderAt, timestamp);
-      const current = this.database.prepare("SELECT id, last_reminder_at, created_at FROM reminder_settings WHERE session_id = ?")
+      if (firstAt <= timestamp) fail("INVALID_INPUT", "The reminder deadline must be in the future.");
+      const current = this.database.prepare("SELECT id, settlement_id, last_reminder_at, created_at FROM reminder_settings WHERE session_id = ?")
         .get(session.id) as Row | undefined;
+      const sameSettlement = current?.settlement_id === settlementId;
+      if (sameSettlement && current?.last_reminder_at !== null) fail("REMINDER_ALREADY_SENT", "The reminder has already been sent for this settlement.");
       const id = current ? String(current.id) : this.createId();
       this.database.prepare(`INSERT INTO reminder_settings
         (id, session_id, settlement_id, enabled, channel_id, first_reminder_at, interval_seconds, next_reminder_at, last_reminder_at, created_at, updated_at)
-        VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, 1, ?, ?, 3600, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET settlement_id = excluded.settlement_id, enabled = 1, channel_id = excluded.channel_id,
           first_reminder_at = excluded.first_reminder_at, interval_seconds = excluded.interval_seconds,
-          next_reminder_at = excluded.next_reminder_at, updated_at = excluded.updated_at`)
-        .run(id, session.id, settlementId, channelId, firstReminderAt, intervalSeconds, nextReminderAt,
-          current?.last_reminder_at ?? null, current?.created_at ?? timestamp, timestamp);
+          next_reminder_at = excluded.next_reminder_at, last_reminder_at = excluded.last_reminder_at, updated_at = excluded.updated_at`)
+        .run(id, session.id, settlementId, channelId, firstAt, firstAt,
+          sameSettlement ? current?.last_reminder_at ?? null : null, current?.created_at ?? timestamp, timestamp);
       return this.readSetting(String(session.id));
     });
   }
@@ -88,38 +82,14 @@ export class ReminderService {
     });
   }
 
-  claimManual(scope: ServiceScope): ReminderClaim {
-    return this.transaction(() => {
-      const { session } = this.authorized(scope, true);
-      const settlementId = this.assertCurrentSettling(session);
-      this.assertUnpaid(String(session.id), settlementId);
-      const setting = this.database.prepare("SELECT * FROM reminder_settings WHERE session_id = ? AND settlement_id = ?")
-        .get(session.id, settlementId) as Row | undefined;
-      if (!setting) fail("REMINDER_NOT_CONFIGURED", "Configure automatic reminders before sending a manual reminder.");
-      const pending = this.database.prepare(`SELECT 1 FROM reminder_logs WHERE setting_id = ?
-        AND (status = 'PROCESSING' OR (status = 'FAILED' AND next_attempt_at IS NOT NULL)) LIMIT 1`).get(setting.id);
-      if (pending) fail("REMINDER_RATE_LIMITED", "A reminder is already being delivered.");
-      const timestamp = safeTimestamp(this.now(), "now");
-      const last = setting.last_reminder_at === null ? null : Number(setting.last_reminder_at);
-      if (last !== null && timestamp < this.checkedAdd(last, MIN_REMINDER_INTERVAL_SECONDS * 1000, "nextAllowedAt")) {
-        fail("REMINDER_RATE_LIMITED", "A reminder was sent recently.", { nextAllowedAt: this.checkedAdd(last, MIN_REMINDER_INTERVAL_SECONDS * 1000, "nextAllowedAt") });
-      }
-      const scheduledAt = this.nextUniqueScheduledAt(String(setting.id), timestamp);
-      const logId = this.createId();
-      this.database.prepare(`INSERT INTO reminder_logs
-        (id, setting_id, session_id, settlement_id, scheduled_at, status, attempt_count, started_at, delivery_kind, channel_id)
-        VALUES (?, ?, ?, ?, ?, 'PROCESSING', 1, ?, 'MANUAL', ?)`)
-        .run(logId, setting.id, session.id, settlementId, scheduledAt, timestamp, setting.channel_id);
-      return this.claimDto(logId, "MANUAL");
-    });
-  }
-
   recover(): number {
     return this.transaction(() => {
       const timestamp = safeTimestamp(this.now(), "now");
       // Discord may have accepted an in-flight send before a crash, so orphaned claims are never retried.
       const result = this.database.prepare(`UPDATE reminder_logs SET status = 'FAILED', next_attempt_at = NULL,
         completed_at = ?, last_error = 'DELIVERY_OUTCOME_UNKNOWN' WHERE status = 'PROCESSING'`).run(timestamp);
+      this.database.prepare(`UPDATE reminder_settings SET enabled = 0, next_reminder_at = NULL, updated_at = ?
+        WHERE id IN (SELECT setting_id FROM reminder_logs WHERE status = 'FAILED' AND delivery_kind = 'AUTO' AND last_error = 'DELIVERY_OUTCOME_UNKNOWN')`).run(timestamp);
       return result.changes;
     });
   }
@@ -128,7 +98,7 @@ export class ReminderService {
     return this.transaction(() => {
       const timestamp = safeTimestamp(this.now(), "now");
       const retry = this.database.prepare(`SELECT l.id FROM reminder_logs l
-        WHERE l.status = 'FAILED' AND l.next_attempt_at <= ?
+        WHERE l.status = 'FAILED' AND l.delivery_kind = 'AUTO' AND l.next_attempt_at <= ?
           AND NOT EXISTS (SELECT 1 FROM reminder_logs p WHERE p.setting_id = l.setting_id AND p.status = 'PROCESSING')
         ORDER BY l.next_attempt_at, l.id LIMIT 1`).get(timestamp) as Row | undefined;
       if (retry) {
@@ -157,9 +127,8 @@ export class ReminderService {
         (id, setting_id, session_id, settlement_id, scheduled_at, status, attempt_count, started_at, delivery_kind, channel_id)
         VALUES (?, ?, ?, ?, ?, 'PROCESSING', 1, ?, 'AUTO', ?)`)
         .run(logId, setting.id, setting.session_id, setting.settlement_id, scheduledAt, timestamp, setting.channel_id);
-      const intervalSeconds = Number((this.database.prepare("SELECT interval_seconds FROM reminder_settings WHERE id = ?").get(setting.id) as Row).interval_seconds);
-      this.database.prepare("UPDATE reminder_settings SET next_reminder_at = ?, updated_at = ? WHERE id = ? AND enabled = 1")
-        .run(this.checkedAdd(timestamp, intervalSeconds * 1000, "nextReminderAt"), timestamp, setting.id);
+      this.database.prepare("UPDATE reminder_settings SET next_reminder_at = NULL, updated_at = ? WHERE id = ? AND enabled = 1")
+        .run(timestamp, setting.id);
       return this.claimDto(logId, "AUTO");
     });
   }
@@ -187,10 +156,13 @@ export class ReminderService {
       const timestamp = safeTimestamp(this.now(), "now");
       const log = this.database.prepare("SELECT setting_id, settlement_id, session_id FROM reminder_logs WHERE id = ? AND status = 'PROCESSING'").get(logId) as Row | undefined;
       if (!log) return;
+      const kind = this.logKind(logId);
       this.database.prepare("UPDATE reminder_logs SET status = 'SENT', completed_at = ?, discord_message_id = ?, next_attempt_at = NULL, last_error = NULL WHERE id = ? AND status = 'PROCESSING'")
         .run(timestamp, id, logId);
-      this.database.prepare("UPDATE reminder_settings SET last_reminder_at = ?, updated_at = ? WHERE id = ? AND session_id = ? AND settlement_id = ?")
-        .run(timestamp, timestamp, log.setting_id, log.session_id, log.settlement_id);
+      this.database.prepare(`UPDATE reminder_settings SET last_reminder_at = ?, enabled = CASE WHEN ? = 'AUTO' THEN 0 ELSE enabled END,
+        next_reminder_at = CASE WHEN ? = 'AUTO' THEN NULL ELSE next_reminder_at END, updated_at = ?
+        WHERE id = ? AND session_id = ? AND settlement_id = ?`)
+        .run(timestamp, kind, kind, timestamp, log.setting_id, log.session_id, log.settlement_id);
     });
   }
 
@@ -204,6 +176,8 @@ export class ReminderService {
       const retryAt = retryable && attempt < 3 ? this.checkedAdd(timestamp, (attempt === 1 ? 60 : 300) * 1000, "nextAttemptAt") : null;
       this.database.prepare("UPDATE reminder_logs SET status = 'FAILED', completed_at = ?, next_attempt_at = ?, last_error = ? WHERE id = ? AND status = 'PROCESSING'")
         .run(timestamp, retryAt, error, logId);
+      if (retryAt === null) this.database.prepare(`UPDATE reminder_settings SET enabled = 0, next_reminder_at = NULL, updated_at = ?
+        WHERE id = (SELECT setting_id FROM reminder_logs WHERE id = ?) AND ? = 'AUTO'`).run(timestamp, logId, this.logKind(logId));
     });
   }
 
@@ -242,7 +216,7 @@ export class ReminderService {
 
   private toSetting(row: Row): ReminderSettingDto {
     return { id: String(row.id), sessionId: String(row.session_id), settlementId: String(row.settlement_id), enabled: Number(row.enabled) === 1,
-      channelId: String(row.channel_id), firstReminderAt: Number(row.first_reminder_at), intervalSeconds: Number(row.interval_seconds),
+      channelId: String(row.channel_id), firstReminderAt: Number(row.first_reminder_at),
       nextReminderAt: row.next_reminder_at === null ? null : Number(row.next_reminder_at), lastReminderAt: row.last_reminder_at === null ? null : Number(row.last_reminder_at), updatedAt: Number(row.updated_at) };
   }
 
@@ -292,16 +266,6 @@ export class ReminderService {
 
   private logKind(logId: string): "AUTO" | "MANUAL" {
     return String((this.database.prepare("SELECT delivery_kind FROM reminder_logs WHERE id = ?").get(logId) as Row).delivery_kind) as "AUTO" | "MANUAL";
-  }
-
-  private nextUniqueScheduledAt(settingId: string, timestamp: number): number {
-    const row = this.database.prepare(`SELECT MAX(scheduled_at) AS scheduled_at,
-        (SELECT next_reminder_at FROM reminder_settings WHERE id = ?) AS next_reminder_at
-      FROM reminder_logs WHERE setting_id = ?`).get(settingId, settingId) as Row;
-    const last = row.scheduled_at === null ? null : Number(row.scheduled_at);
-    let candidate = last !== null && last >= timestamp ? this.checkedAdd(last, 1, "scheduledAt") : timestamp;
-    if (row.next_reminder_at !== null && candidate === Number(row.next_reminder_at)) candidate = this.checkedAdd(candidate, 1, "scheduledAt");
-    return candidate;
   }
 
   private checkedAdd(value: number, delta: number, name: string): number {

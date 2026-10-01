@@ -2,7 +2,7 @@ import { newDraftToken } from "./custom-id.js";
 
 export interface ReminderDraft {
   token: string; owner: string; guild: string; session: string; revision: number; settlementId: string;
-  channelId: string; firstReminderText: string; intervalHoursText: string; generation: number; expiresAt: number;
+  channelId: string; firstReminderText: string; generation: number; expiresAt: number;
 }
 
 export class ReminderDraftStore {

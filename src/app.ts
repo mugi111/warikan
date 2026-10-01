@@ -25,7 +25,7 @@ export function createApplication(database: Database.Database): Application {
   const settlementService = new SettlementService(database);
   const reminderWorker = new ReminderWorker(reminderService, new DiscordReminderSender(client));
   const sessionService = new SessionService(database);
-  const services = { sessions: sessionService, settlements: settlementService, reminders: reminderService, worker: reminderWorker };
+  const services = { sessions: sessionService, settlements: settlementService, reminders: reminderService };
 
   client.on(Events.ClientReady, (readyClient) => {
     logger.info("Discord client ready", { userId: readyClient.user.id });
