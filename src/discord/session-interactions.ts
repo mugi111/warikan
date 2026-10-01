@@ -135,10 +135,18 @@ export async function handleSessionInteraction(service: SessionService, interact
     const draft = drafts.create(actor, guild, session, expense);
     await interaction.update({ ...expenseDraftView(session, draft), allowedMentions: mentions }); return;
   }
-  if (["payer", "target", "untarget", "all", "fields", "save", "cancel"].includes(action)) {
+  if (["payer", "target", "untarget", "all", "fields", "save", "cancel", "dpage"].includes(action)) {
     const [token, generation] = arg.split("_");
     const draft = drafts.get(token ?? "", actor, guild, session.id, revision);
     if (!draft || draft.generation.toString(36) !== generation) return acknowledgeError(interaction, "入力画面の期限が切れました。開き直してください。");
+    if (action === "dpage") {
+      const page = Number.parseInt(arg.split("_")[2] ?? "", 36);
+      const pages = Math.max(1, Math.ceil(session.members.filter((member) => !member.removedAt).length / 25));
+      if (!Number.isSafeInteger(page) || page < 0 || page >= pages) return acknowledgeError(interaction, "参加者ページを確認できません。");
+      draft.memberPage = page;
+      draft.generation += 1;
+      await interaction.update({ ...expenseDraftView(session, draft), allowedMentions: mentions }); return;
+    }
     if (action === "fields") { await interaction.showModal(fieldsModal(makeCustomId("fields", session.id, revision, `${draft.token}_${draft.generation.toString(36)}`), draft.title, draft.amount)); return; }
     if (action === "cancel") { drafts.delete(draft.token); await interaction.update({ ...sessionDetailView(session, actor), allowedMentions: mentions }); return; }
     if (action === "save") {
@@ -152,9 +160,9 @@ export async function handleSessionInteraction(service: SessionService, interact
       } catch (error) { return acknowledgeError(interaction, toUserError(error)); } return;
     }
     if (action === "all") { draft.allEligible = !draft.allEligible; draft.eligible = new Set(draft.allEligible ? session.members.filter((m) => !m.removedAt).map((m) => m.id) : []); }
-    else if ((action === "payer" || action === "target" || action === "untarget") && interaction.isUserSelectMenu()) {
-      const selected = session.members.filter((m) => !m.removedAt && interaction.values.includes(m.discordUserId));
-      if (selected.length !== interaction.values.length) return acknowledgeError(interaction, "選択したユーザーはこのセッションの参加者ではありません。");
+    else if ((action === "payer" || action === "target" || action === "untarget") && interaction.isStringSelectMenu()) {
+      const selected = session.members.filter((m) => !m.removedAt && interaction.values.includes(m.id));
+      if (selected.length !== interaction.values.length) return acknowledgeError(interaction, "セッションの参加者から選択してください。");
       if (action === "payer") draft.payer = selected[0]!.id;
       else for (const member of selected) action === "target" ? draft.eligible.add(member.id) : draft.eligible.delete(member.id);
       draft.allEligible = draft.eligible.size === session.members.filter((m) => !m.removedAt).length;
