@@ -9,6 +9,7 @@ import type { MemberSettingsInput, SessionDto } from "../application/types.js";
 import { makeCustomId, parseCustomId } from "./custom-id.js";
 import { ExpenseDraftStore } from "./expense-drafts.js";
 import type { ExpenseDraft } from "./expense-drafts.js";
+import { resolveUserLabels } from "./user-labels.js";
 import { expenseDetailView, expenseDraftView, expenseListView, fieldsModal, memberView, renameSessionModal, sessionDetailView, sessionListView, settingsModal } from "./session-views.js";
 
 const drafts = new ExpenseDraftStore();
@@ -224,14 +225,11 @@ async function acknowledgeUpdate(interaction: Interaction): Promise<void> {
 async function buildExpenseDraftView(interaction: Interaction, session: SessionDto, draft: ExpenseDraft) {
   const members = session.members.filter((member) => !member.removedAt);
   const page = members.slice(draft.memberPage * 25, (draft.memberPage + 1) * 25);
-  const displayNames = new Map<string, string>();
-  await Promise.all(page.map(async (member, index) => {
-    const user = await interaction.client.users.fetch(member.discordUserId).catch(() => null);
-    const label = user
-      ? user.globalName && user.globalName !== user.username ? `${user.globalName} (@${user.username})` : `@${user.username}`
-      : `参加者 ${draft.memberPage * 25 + index + 1}`;
-    displayNames.set(member.id, label);
-  }));
+  const labelsByDiscordId = await resolveUserLabels(interaction.client, page.map((member) => member.discordUserId));
+  const displayNames = new Map(page.map((member, index) => [
+    member.id,
+    labelsByDiscordId.get(member.discordUserId) ?? `参加者 ${draft.memberPage * 25 + index + 1}`,
+  ]));
   return expenseDraftView(session, draft, displayNames);
 }
 

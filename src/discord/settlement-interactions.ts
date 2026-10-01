@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, MessageFlags, PermissionFlagsBits, type Interaction } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, MessageFlags, PermissionFlagsBits, type Interaction, type MessageComponentInteraction } from "discord.js";
 import type { SessionService } from "../application/session-service.js";
 import type { SettlementService, SettlementSnapshotDto } from "../application/settlement-service.js";
 import type { ReminderService } from "../application/reminder-service.js";
@@ -7,6 +7,7 @@ import type { SessionDto } from "../application/types.js";
 import { makeCustomId, parseCustomId } from "./custom-id.js";
 import { ReminderDraftStore, type ReminderDraft } from "./reminder-drafts.js";
 import { balancesView, previewView, reminderDraftView, reminderFieldsModal, reminderView, settlementView, transferActionView } from "./settlement-views.js";
+import { resolveUserLabels } from "./user-labels.js";
 
 const actions = new Set(["preview","ppage","finalize","settlement","balances","transfer","paid","unpaid","invalidate","invconfirm","close","closeconfirm","reminder","remedit","remchannel","remfields","remsave","remcancel","remstop"]);
 const mentions = { parse: [] as never[] };
@@ -33,13 +34,13 @@ export async function handleSettlementInteraction(services: Services, interactio
   const checkSettlement=(sid:string)=>{const st=current();if(st.id.replaceAll("-","")!==sid)throw new ApplicationError("SETTLEMENT_NOT_CURRENT","Stale settlement.");return st;};
   try {
     if((action==="preview"||action==="ppage") && interaction.isButton()) { if(s.status!=="ACTIVE") throw new Error(); const p=services.settlements.preview(scope); const page=action==="ppage"?Number.parseInt(arg,36):0; await interaction.update({...previewView(s,p,actor,Number.isSafeInteger(page)?page:0),allowedMentions:mentions}); return true; }
-    if(action==="finalize" && interaction.isButton()) { if(s.creatorDiscordUserId!==actor) throw new Error(); const result=services.settlements.finalize(scope,{expectedRevision:revision}); const updated=services.sessions.getSession(scope); const text=result.becameAllPaid?"精算を確定しました。送金はありません。すべて支払い済みです。":"精算を確定しました。"; await interaction.update({...settlementView(updated,result.settlement,0,actor),content:text,allowedMentions:mentions}); return true; }
-    if(action==="settlement" && interaction.isButton()) { const st=s.status==="CLOSED"?services.settlements.list(scope)[0]:current(); if(!st)throw new Error(); const [hex,pageText]=arg.split("_"); if(hex && st.id.replaceAll("-","")!==hex)throw new Error(); const p=pageText?Number.parseInt(pageText,36):0; await interaction.update({...settlementView(s,st,Number.isSafeInteger(p)?p:0,actor),allowedMentions:mentions}); return true; }
+    if(action==="finalize" && interaction.isButton()) { if(s.creatorDiscordUserId!==actor) throw new Error(); const result=services.settlements.finalize(scope,{expectedRevision:revision}); const updated=services.sessions.getSession(scope); const text=result.becameAllPaid?"精算を確定しました。送金はありません。すべて支払い済みです。":"精算を確定しました。"; await updateSettlementView(interaction,updated,result.settlement,0,actor,{content:text}); return true; }
+    if(action==="settlement" && interaction.isButton()) { const st=s.status==="CLOSED"?services.settlements.list(scope)[0]:current(); if(!st)throw new Error(); const [hex,pageText]=arg.split("_"); if(hex && st.id.replaceAll("-","")!==hex)throw new Error(); const p=pageText?Number.parseInt(pageText,36):0; await updateSettlementView(interaction,s,st,Number.isSafeInteger(p)?p:0,actor); return true; }
     if(action==="balances" && interaction.isButton()) { const [hex,pageText]=arg.split("_"); const st=checkSettlement(hex??""); const page=pageText?Number.parseInt(pageText,36):0; await interaction.update({...balancesView(s,st,Number.isSafeInteger(page)?page:0),allowedMentions:mentions}); return true; }
     if(action==="transfer" && interaction.isStringSelectMenu()) { const st=checkSettlement(arg.split("_")[0]!); const transfer=st.transfers.find(t=>t.id.replaceAll("-","")===interaction.values[0]); if(!transfer)throw new Error(); const member=(mid:string)=>s.members.find(m=>m.id===mid)?.discordUserId; if(actor!==s.creatorDiscordUserId&&actor!==member(transfer.fromMemberId)&&actor!==member(transfer.toMemberId))throw new Error(); await interaction.update({...transferActionView(s,st,transfer.id.replaceAll("-","")),allowedMentions:mentions}); return true; }
-    if((action==="paid"||action==="unpaid")&&interaction.isButton()){const st=current(); const result=services.settlements.setTransferStatus(scope,st.id,normalizeUuid(arg),action==="paid"?"PAID":"UNPAID",{expectedRevision:revision}); const updated=services.sessions.getSession(scope); await interaction.update({...settlementView(updated,result.settlement,0,actor),...(result.becameAllPaid?{content:"すべての送金が支払済みになりました。作成者はセッションを完了できます。"}:{}),allowedMentions:mentions});return true;}
+    if((action==="paid"||action==="unpaid")&&interaction.isButton()){const st=current(); const result=services.settlements.setTransferStatus(scope,st.id,normalizeUuid(arg),action==="paid"?"PAID":"UNPAID",{expectedRevision:revision}); const updated=services.sessions.getSession(scope); await updateSettlementView(interaction,updated,result.settlement,0,actor,result.becameAllPaid?{content:"すべての送金が支払済みになりました。作成者はセッションを完了できます。"}:{});return true;}
     if((action==="invalidate"||action==="close")&&interaction.isButton()){const st=checkSettlement(arg);if(actor!==s.creatorDiscordUserId)throw new Error();const confirm=action==="invalidate"?"invconfirm":"closeconfirm";const label=action==="invalidate"?"精算を解除":"完了する";await interaction.reply({...privateReply,content:action==="invalidate"?"精算を解除して編集可能に戻しますか？":"すべて支払い済みです。セッションを完了しますか？",components:[new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId(makeCustomId(confirm,s.id,s.revision,st.id.replaceAll("-",""))).setLabel(label).setStyle(ButtonStyle.Danger))]});return true;}
-    if((action==="invconfirm"||action==="closeconfirm")&&interaction.isButton()){if(actor!==s.creatorDiscordUserId)throw new Error();const st=checkSettlement(arg);if(action==="invconfirm"){services.settlements.invalidate(scope,st.id,{expectedRevision:revision});const updated=services.sessions.getSession(scope);await interaction.update({content:"精算を解除しました。",...await import("./session-views.js").then(m=>m.sessionDetailView(updated,actor)),allowedMentions:mentions});}else{const result=services.settlements.close(scope,st.id,{expectedRevision:revision});const updated=services.sessions.getSession(scope);await interaction.update({...settlementView(updated,result.settlement,0,actor),content:"セッションを完了しました。",allowedMentions:mentions});}return true;}
+    if((action==="invconfirm"||action==="closeconfirm")&&interaction.isButton()){if(actor!==s.creatorDiscordUserId)throw new Error();const st=checkSettlement(arg);if(action==="invconfirm"){services.settlements.invalidate(scope,st.id,{expectedRevision:revision});const updated=services.sessions.getSession(scope);await interaction.update({content:"精算を解除しました。",...await import("./session-views.js").then(m=>m.sessionDetailView(updated,actor)),allowedMentions:mentions});}else{const result=services.settlements.close(scope,st.id,{expectedRevision:revision});const updated=services.sessions.getSession(scope);await updateSettlementView(interaction,updated,result.settlement,0,actor,{content:"セッションを完了しました。"});}return true;}
     if(action==="reminder"&&interaction.isButton()){const st=current();const setting=services.reminders.get(scope);await interaction.update({...reminderView(s,st,setting,actor),allowedMentions:mentions});return true;}
     if(action==="remedit"&&interaction.isButton()){const st=checkSettlement(arg);if(actor!==s.creatorDiscordUserId)throw new Error();const old=services.reminders.get(scope);const d=drafts.create({owner:actor,guild:interaction.guildId,session:s.id,revision,settlementId:st.id,channelId:old?.channelId??"",firstReminderText:""});await interaction.update({...reminderDraftView(s,d),allowedMentions:mentions});return true;}
     if(action==="remchannel"&&interaction.isChannelSelectMenu()){const [token,gen]=arg.split("_");const st=current();const d=drafts.get(token??"",actor,interaction.guildId,s.id,revision,st.id);if(!d||d.generation.toString(36)!==gen)throw new Error();d.channelId=interaction.values[0]??"";d.generation++;await interaction.update({...reminderDraftView(s,d),allowedMentions:mentions});return true;}
@@ -50,6 +51,23 @@ export async function handleSettlementInteraction(services: Services, interactio
     if(action==="remstop"&&interaction.isButton()){checkSettlement(arg);if(actor!==s.creatorDiscordUserId)throw new Error();services.reminders.stop(scope);await interaction.update({...reminderView(s,current(),services.reminders.get(scope),actor),content:"自動通知を停止しました。",allowedMentions:mentions});return true;}
   } catch(e){await fail(userError(e));return true;}
   return true;
+}
+
+async function updateSettlementView(interaction: MessageComponentInteraction, session: SessionDto, settlement: SettlementSnapshotDto, page: number, actor: string, extra: { content?: string } = {}): Promise<void> {
+  await interaction.deferUpdate();
+  const view = await buildSettlementView(interaction, session, settlement, page, actor);
+  await interaction.editReply({ ...view, ...extra, allowedMentions: mentions });
+}
+
+async function buildSettlementView(interaction: MessageComponentInteraction, session: SessionDto, settlement: SettlementSnapshotDto, page: number, actor: string) {
+  const pageIndex = Math.max(0, Math.min(page, Math.ceil(settlement.transfers.length / 10) - 1));
+  const transfers = settlement.transfers.slice(pageIndex * 10, (pageIndex + 1) * 10);
+  const memberDiscordIds = transfers.flatMap((transfer) => [
+    session.members.find((member) => member.id === transfer.fromMemberId)?.discordUserId,
+    session.members.find((member) => member.id === transfer.toMemberId)?.discordUserId,
+  ].filter((id): id is string => Boolean(id)));
+  const userLabels = await resolveUserLabels(interaction.client, memberDiscordIds);
+  return settlementView(session, settlement, pageIndex, actor, userLabels);
 }
 
 function normalizeUuid(v:string):string{if(!/^[0-9a-f]{32}$/i.test(v))throw new Error();return `${v.slice(0,8)}-${v.slice(8,12)}-${v.slice(12,16)}-${v.slice(16,20)}-${v.slice(20)}`;}
