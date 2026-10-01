@@ -9,7 +9,7 @@ StartLimitBurst=10
 Type=simple
 User=warikan
 Group=warikan
-WorkingDirectory=/opt/warikan
+WorkingDirectory=/opt/warikan-deploy/current
 EnvironmentFile=/etc/warikan/warikan.env
 Environment=DATABASE_PATH=/var/lib/warikan/warikan.sqlite
 ExecStart=/usr/bin/node /opt/warikan/dist/index.js

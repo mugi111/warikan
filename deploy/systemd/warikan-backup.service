@@ -5,7 +5,7 @@ Description=Create a Warikan SQLite backup
 Type=oneshot
 User=warikan
 Group=warikan
-WorkingDirectory=/opt/warikan
+WorkingDirectory=/opt/warikan-deploy/current
 EnvironmentFile=/etc/warikan/warikan.env
 Environment=DATABASE_PATH=/var/lib/warikan/warikan.sqlite
 Environment=BACKUP_DIRECTORY=/var/lib/warikan/backups

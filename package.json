@@ -13,6 +13,7 @@
     "commands:register": "tsx src/commands/register.ts",
     "commands:register:production": "node dist/commands/register.js",
     "backup": "node dist/operations/backup-command.js",
+    "deploy:gce": "bash deploy/deploy-gce.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
