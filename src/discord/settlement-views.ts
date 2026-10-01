@@ -20,7 +20,7 @@ export function previewView(s: SessionDto, preview: SettlementPreviewDto, actor:
     "【送金予定】",
     transfers.map((t) => `${memberName(s, t.fromMemberId)} → ${memberName(s, t.toMemberId)} · ${t.amount.toLocaleString()}円`).join("\n") || "送金はありません。",
   ].join("\n\n");
-  const embed = new EmbedBuilder().setTitle("精算プレビュー").setDescription(`合計 ${preview.totalAmount.toLocaleString()}円\n\n${body}`).setFooter({ text: `確定予定 第${preview.nextVersion}版 · ${p + 1}/${pages}ページ · 更新番号 ${s.revision}` });
+  const embed = new EmbedBuilder().setTitle("精算プレビュー").setDescription(`合計 ${preview.totalAmount.toLocaleString()}円\n\n${body}`).setFooter({ text: `確定予定 第${preview.nextVersion}版 · ${p + 1}/${pages}ページ` });
   const components = [
     new ActionRowBuilder<ButtonBuilder>().addComponents(button("前へ", id("ppage", s, `${Math.max(0, p - 1).toString(36)}_prev`)).setDisabled(p === 0), button("次へ", id("ppage", s, `${Math.min(pages - 1, p + 1).toString(36)}_next`)).setDisabled(p >= pages - 1)),
     new ActionRowBuilder<ButtonBuilder>().addComponents(...(s.creatorDiscordUserId === actor ? [button("精算を確定", id("finalize", s), ButtonStyle.Danger)] : []), button("詳細へ戻る", id("page", s))),
