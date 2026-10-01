@@ -18,6 +18,7 @@ service_was_active=0
 switched=0
 systemd_changed=0
 completed=0
+trap 'status=$?; printf "Remote update failed at line %s (exit %s): %s\\n" "$LINENO" "$status" "$BASH_COMMAND" >&2; exit "$status"' ERR
 
 save_unit() {
   local unit="$1"
@@ -67,10 +68,14 @@ rollback() {
 }
 trap rollback EXIT
 
-command -v node >/dev/null
-command -v npm >/dev/null
-command -v systemctl >/dev/null
-node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 12)) process.exit(1)'
+command -v node >/dev/null || { printf 'Node.js is required on the VM.\n' >&2; exit 2; }
+command -v npm >/dev/null || { printf 'npm is required on the VM.\n' >&2; exit 2; }
+command -v systemctl >/dev/null || { printf 'systemd is required on the VM.\n' >&2; exit 2; }
+node_version="$(node --version)"
+if ! node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 12)) process.exit(1)'; then
+  printf 'Node.js 22.12 or later is required; found %s.\n' "$node_version" >&2
+  exit 2
+fi
 [[ -f "$config_file" ]] || { printf 'Missing Discord environment file: %s\n' "$config_file" >&2; exit 2; }
 if systemctl is-active --quiet warikan.service; then service_was_active=1; fi
 
