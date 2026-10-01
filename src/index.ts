@@ -1,9 +1,11 @@
 import { createApplication } from "./app.js";
+import { config } from "./config.js";
 import { openDatabase } from "./database.js";
 import { logger } from "./logger.js";
 
 async function main(): Promise<void> {
-  const database = await openDatabase();
+  const database = await openDatabase({ path: config.databasePath });
+  logger.info("SQLite database opened", { databasePath: config.databasePath });
   const application = createApplication(database);
   let shuttingDown = false;
 
