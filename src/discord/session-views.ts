@@ -23,8 +23,8 @@ export function sessionListView(sessions: SessionDto[], page: number) {
   }
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
     button("新規作成", makeCustomId("new"), ButtonStyle.Primary),
-    button("前へ", makeCustomId("page", "", 0, String(Math.max(0, current - 1)))).setDisabled(current === 0),
-    button("次へ", makeCustomId("page", "", 0, String(Math.min(pages - 1, current + 1)))).setDisabled(current >= pages - 1),
+    button("前へ", makeCustomId("page", "", 0, `${Math.max(0, current - 1)}_prev`)).setDisabled(current === 0),
+    button("次へ", makeCustomId("page", "", 0, `${Math.min(pages - 1, current + 1)}_next`)).setDisabled(current >= pages - 1),
   ));
   return { embeds: [embed], components: rows };
 }
@@ -46,7 +46,7 @@ export function memberView(s: SessionDto, page: number, actor = "") {
   const pages = Math.max(1, Math.ceil(active.length / 10));
   const current = Math.min(page, pages - 1);
   const rows: ActionRowBuilder<any>[] = [];
-  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("前へ", id("mpage", s, String(Math.max(0, current - 1)))).setDisabled(current === 0), button("次へ", id("mpage", s, String(Math.min(pages - 1, current + 1)))).setDisabled(current >= pages - 1), button("詳細へ戻る", id("page", s, "0"))));
+  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("前へ", id("mpage", s, `${Math.max(0, current - 1)}_prev`)).setDisabled(current === 0), button("次へ", id("mpage", s, `${Math.min(pages - 1, current + 1)}_next`)).setDisabled(current >= pages - 1), button("詳細へ戻る", id("page", s, "0"))));
   if (s.creatorDiscordUserId === actor && s.status === "ACTIVE") {
     rows.push(new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(id("add", s)).setPlaceholder("参加者を追加（最大25人）").setMinValues(1).setMaxValues(25)));
     if (active.length) rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id("remove", s)).setPlaceholder("削除する参加者").addOptions(active.slice(current * 10, current * 10 + 10).map((m) => ({ label: m.discordUserId, value: m.id, description: `重み ${m.weight} · 調整 ${m.fixedAdjustment}` })))));
@@ -59,7 +59,7 @@ export function expenseListView(s: SessionDto, page: number) {
   const items = s.expenses.slice(current * 10, current * 10 + 10);
   const rows: ActionRowBuilder<any>[] = [];
   if (items.length) rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id("expense", s, String(current))).setPlaceholder("支出を選択").addOptions(items.map((e) => ({ label: safe(e.title, 100), value: e.id.replaceAll("-", ""), description: `${e.amount.toLocaleString()}円` })))));
-  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("前へ", id("epage", s, String(Math.max(0, current - 1)))).setDisabled(current === 0), button("次へ", id("epage", s, String(Math.min(pages - 1, current + 1)))).setDisabled(current >= pages - 1), ...(s.status === "ACTIVE" ? [button("支出を追加", id("draft", s, "new"), ButtonStyle.Success)] : []), button("詳細へ戻る", id("page", s, "0"))));
+  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("前へ", id("epage", s, `${Math.max(0, current - 1)}_prev`)).setDisabled(current === 0), button("次へ", id("epage", s, `${Math.min(pages - 1, current + 1)}_next`)).setDisabled(current >= pages - 1), ...(s.status === "ACTIVE" ? [button("支出を追加", id("draft", s, "new"), ButtonStyle.Success)] : []), button("詳細へ戻る", id("page", s, "0"))));
   return { embeds: [new EmbedBuilder().setTitle(`支出 (${s.expenses.length})`).setDescription(items.map((e) => `**${safe(e.title)}** · ${e.amount.toLocaleString()}円`).join("\n") || "支出はありません")], components: rows };
 }
 
