@@ -12,7 +12,7 @@ Group=warikan
 WorkingDirectory=/opt/warikan-deploy/current
 EnvironmentFile=/etc/warikan/warikan.env
 Environment=DATABASE_PATH=/var/lib/warikan/warikan.sqlite
-ExecStart=/usr/bin/node /opt/warikan/dist/index.js
+ExecStart=/usr/bin/node /opt/warikan-deploy/current/dist/index.js
 Restart=always
 RestartSec=10
 TimeoutStopSec=30

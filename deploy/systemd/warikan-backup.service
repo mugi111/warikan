@@ -9,7 +9,7 @@ WorkingDirectory=/opt/warikan-deploy/current
 EnvironmentFile=/etc/warikan/warikan.env
 Environment=DATABASE_PATH=/var/lib/warikan/warikan.sqlite
 Environment=BACKUP_DIRECTORY=/var/lib/warikan/backups
-ExecStart=/usr/bin/node /opt/warikan/dist/operations/backup-command.js
+ExecStart=/usr/bin/node /opt/warikan-deploy/current/dist/operations/backup-command.js
 TimeoutStartSec=300
 TimeoutStopSec=15
 UMask=0077
