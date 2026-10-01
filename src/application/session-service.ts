@@ -83,7 +83,7 @@ export class SessionService {
       const rows = this.database.prepare(`SELECT s.id FROM sessions s JOIN guilds g ON g.id = s.guild_id
         WHERE g.discord_guild_id = ? AND (s.creator_discord_user_id = ? OR EXISTS
           (SELECT 1 FROM session_members m WHERE m.session_id = s.id AND m.discord_user_id = ? AND m.removed_at IS NULL))
-        ORDER BY s.updated_at DESC, s.id`).all(guild, actor) as Row[];
+        ORDER BY s.updated_at DESC, s.id`).all(guild, actor, actor) as Row[];
       return rows.map((row) => this.readSession(guild, String(row.id), actor));
     });
   }
