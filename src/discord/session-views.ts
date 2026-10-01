@@ -77,8 +77,8 @@ export function expenseDraftView(s: SessionDto, d: ExpenseDraft) {
   const rows: ActionRowBuilder<any>[] = [
     new ActionRowBuilder<ButtonBuilder>().addComponents(button("内容・金額を入力", cmd("fields"), ButtonStyle.Primary), button("全員を対象", cmd("all"), d.allEligible ? ButtonStyle.Success : ButtonStyle.Secondary)),
     new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("payer")).setPlaceholder("支払者を選択").setMinValues(1).setMaxValues(1)),
-    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("target")).setPlaceholder("対象者を追加").setMinValues(1).setMaxValues(25)),
-    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("untarget")).setPlaceholder("対象者から除外").setMinValues(1).setMaxValues(25)),
+    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("target")).setPlaceholder("対象追加").setMinValues(1).setMaxValues(25)),
+    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("untarget")).setPlaceholder("対象除外").setMinValues(1).setMaxValues(25)),
     new ActionRowBuilder<ButtonBuilder>().addComponents(button("保存", cmd("save"), ButtonStyle.Success), button("キャンセル", cmd("cancel"), ButtonStyle.Danger)),
   ];
   const members = s.members.filter((m) => !m.removedAt);
