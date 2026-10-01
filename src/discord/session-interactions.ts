@@ -3,6 +3,7 @@ import {
   type Interaction, type UserSelectMenuInteraction, type StringSelectMenuInteraction,
 } from "discord.js";
 import { ApplicationError } from "../application/errors.js";
+import { logger } from "../logger.js";
 import { SessionService } from "../application/session-service.js";
 import type { MemberSettingsInput, SessionDto } from "../application/types.js";
 import { makeCustomId, parseCustomId } from "./custom-id.js";
@@ -27,7 +28,14 @@ export async function handleSessionInteraction(service: SessionService, interact
     if (!interaction.inGuild() || !interaction.guildId) { await interaction.reply({ ...privateReply, content: "サーバー内で実行してください。" }); return; }
     await interaction.deferReply(privateReply);
     try { await interaction.editReply({ ...sessionListView(service.listSessions(interaction.guildId, interaction.user.id), 0), allowedMentions: mentions }); }
-    catch (error) { await interaction.editReply({ content: toUserError(error), embeds: [], components: [], allowedMentions: mentions }); }
+    catch (error) {
+      logger.error("Warikan command failed", {
+        errorType: error instanceof Error ? error.name : "unknown",
+        ...(error instanceof ApplicationError ? { errorCode: error.code } : {}),
+        ...(error instanceof Error ? { errorMessage: error.message } : {})
+      });
+      await interaction.editReply({ content: toUserError(error), embeds: [], components: [], allowedMentions: mentions });
+    }
     return;
   }
   if (!interaction.isMessageComponent() && !interaction.isModalSubmit()) return;
