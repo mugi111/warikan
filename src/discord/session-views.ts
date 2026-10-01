@@ -31,7 +31,7 @@ export function sessionListView(sessions: SessionDto[], page: number) {
 
 export function sessionDetailView(s: SessionDto, actor = "") {
   const active = s.members.filter((member) => member.removedAt === null);
-  const embed = new EmbedBuilder().setTitle(safe(s.name, 256)).setDescription(`状態: ${s.status === "ACTIVE" ? "進行中" : s.status === "SETTLING" ? "精算中" : "完了"}\n参加者 ${active.length}人 · 支出 ${s.expenses.length}件\n作成者 <@${s.creatorDiscordUserId}>`).setFooter({ text: `更新番号 ${s.revision}` });
+  const embed = new EmbedBuilder().setTitle(safe(s.name, 256)).setDescription(`状態: ${s.status === "ACTIVE" ? "進行中" : s.status === "SETTLING" ? "精算中" : "完了"}\n参加者 ${active.length}人 · 支出 ${s.expenses.length}件\n作成者 <@${s.creatorDiscordUserId}>`);
   const rows: ActionRowBuilder<any>[] = [];
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("参加者", id("members", s)), button("支出", id("expenses", s)), ...(s.status === "ACTIVE" ? [button("支出を追加", id("draft", s, "new"), ButtonStyle.Success)] : [])));
   if (s.status === "ACTIVE") rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("精算プレビュー", id("preview", s), ButtonStyle.Primary)));
@@ -59,31 +59,48 @@ export function expenseListView(s: SessionDto, page: number) {
   const items = s.expenses.slice(current * 10, current * 10 + 10);
   const rows: ActionRowBuilder<any>[] = [];
   if (items.length) rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id("expense", s, String(current))).setPlaceholder("支出を選択").addOptions(items.map((e) => ({ label: safe(e.title, 100), value: e.id.replaceAll("-", ""), description: `${e.amount.toLocaleString()}円` })))));
-  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("前へ", id("epage", s, `${Math.max(0, current - 1)}_prev`)).setDisabled(current === 0), button("次へ", id("epage", s, `${Math.min(pages - 1, current + 1)}_next`)).setDisabled(current >= pages - 1), ...(s.status === "ACTIVE" ? [button("支出を追加", id("draft", s, "new"), ButtonStyle.Success)] : []), button("詳細へ戻る", id("page", s, "0"))));
+  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("前へ", id("epage", s, `${Math.max(0, current - 1)}_prev`)).setDisabled(current === 0), button("次へ", id("epage", s, `${Math.min(pages - 1, current + 1)}_next`)).setDisabled(current >= pages - 1), button("詳細へ戻る", id("page", s, "0"))));
   return { embeds: [new EmbedBuilder().setTitle(`支出 (${s.expenses.length})`).setDescription(items.map((e) => `**${safe(e.title)}** · ${e.amount.toLocaleString()}円`).join("\n") || "支出はありません")], components: rows };
 }
 
 export function expenseDetailView(s: SessionDto, e: ExpenseDto, actor = "") {
   const payer = s.members.find((m) => m.id === e.payerMemberId);
-  const embed = new EmbedBuilder().setTitle(safe(e.title, 256)).setDescription(`${e.amount.toLocaleString()}円\n支払者 <@${payer?.discordUserId ?? ""}>\n対象 ${e.eligibleMemberIds.length}人`).setFooter({ text: `更新番号 ${s.revision}` });
+  const embed = new EmbedBuilder().setTitle(safe(e.title, 256)).setDescription(`${e.amount.toLocaleString()}円\n支払者 <@${payer?.discordUserId ?? ""}>\n対象 ${e.eligibleMemberIds.length}人`);
   const controls = s.creatorDiscordUserId === actor && s.status === "ACTIVE" ? [button("編集", id("draft", s, e.id.replaceAll("-", "")), ButtonStyle.Primary), button("削除", id("delete", s, e.id.replaceAll("-", "")), ButtonStyle.Danger)] : [];
   const rows = [new ActionRowBuilder<ButtonBuilder>().addComponents(...controls, button("一覧へ戻る", id("expenses", s)))];
   return { embeds: [embed], components: rows };
 }
 
-export function expenseDraftView(s: SessionDto, d: ExpenseDraft) {
+export function expenseDraftView(s: SessionDto, d: ExpenseDraft, displayNames: ReadonlyMap<string, string> = new Map()) {
   const generation = d.generation.toString(36);
   const cmd = (a: string) => makeCustomId(a, s.id, s.revision, `${d.token}_${generation}`);
-  const rows: ActionRowBuilder<any>[] = [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(button("内容・金額を入力", cmd("fields"), ButtonStyle.Primary), button("全員を対象", cmd("all"), d.allEligible ? ButtonStyle.Success : ButtonStyle.Secondary)),
-    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("payer")).setPlaceholder("支払者を選択").setMinValues(1).setMaxValues(1)),
-    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("target")).setPlaceholder("対象者を追加").setMinValues(1).setMaxValues(25)),
-    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("untarget")).setPlaceholder("対象者から除外").setMinValues(1).setMaxValues(25)),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(button("保存", cmd("save"), ButtonStyle.Success), button("キャンセル", cmd("cancel"), ButtonStyle.Danger)),
-  ];
   const members = s.members.filter((m) => !m.removedAt);
+  const pageSize = 25;
+  const pages = Math.max(1, Math.ceil(members.length / pageSize));
+  d.memberPage = Math.max(0, Math.min(d.memberPage, pages - 1));
+  const memberPage = members.slice(d.memberPage * pageSize, (d.memberPage + 1) * pageSize);
+  const options = memberPage.map((member, index) => ({
+    label: (displayNames.get(member.id) ?? `参加者 ${d.memberPage * pageSize + index + 1}`).slice(0, 100),
+    value: member.id,
+    description: d.eligible.has(member.id) ? "現在の対象" : "対象外",
+  }));
+  const paging = pages > 1 ? [
+    button("前へ", makeCustomId("dpage", s.id, s.revision, `${d.token}_${generation}_${Math.max(0, d.memberPage - 1)}_prev`)).setDisabled(d.memberPage === 0),
+    button("次へ", makeCustomId("dpage", s.id, s.revision, `${d.token}_${generation}_${Math.min(pages - 1, d.memberPage + 1)}_next`)).setDisabled(d.memberPage >= pages - 1),
+  ] : [];
+  const rows: ActionRowBuilder<any>[] = [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(button("内容・金額を入力", cmd("fields"), ButtonStyle.Primary), button("全員を対象", cmd("all"), d.allEligible ? ButtonStyle.Success : ButtonStyle.Secondary), ...paging),
+  ];
+  if (options.length) {
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(cmd("payer")).setPlaceholder("支払者を選択").setMinValues(1).setMaxValues(1).addOptions(options)));
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(cmd("target")).setPlaceholder("対象追加").setMinValues(1).setMaxValues(options.length).addOptions(options)));
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(cmd("untarget")).setPlaceholder("対象除外").setMinValues(1).setMaxValues(options.length).addOptions(options)));
+  } else {
+    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("参加者がいません", cmd("save")).setDisabled(true)));
+  }
+  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("保存", cmd("save"), ButtonStyle.Success), button("キャンセル", cmd("cancel"), ButtonStyle.Danger)));
   const payer = members.find((m) => m.id === d.payer);
-  return { embeds: [new EmbedBuilder().setTitle(d.expenseId ? "支出を編集" : "支出を追加").setDescription(`名称: ${safe(d.title || "未入力")}\n金額: ${d.amount || "未入力"}円\n支払者: ${payer ? `<@${payer.discordUserId}>` : "未選択"}\n対象: ${d.allEligible ? "全員" : `${d.eligible.size}人`}`)], components: rows };
+  return { embeds: [new EmbedBuilder().setTitle(d.expenseId ? "支出を編集" : "支出を追加").setDescription(`名称: ${safe(d.title || "未入力")}\n金額: ${d.amount || "未入力"}円\n支払者: ${payer ? `<@${payer.discordUserId}>` : "未選択"}\n対象: ${d.allEligible ? "全員" : `${d.eligible.size}人`}\n参加者候補: ${d.memberPage + 1}/${pages}ページ`)], components: rows };
 }
 
 export function fieldsModal(customId: string, title = "", amount = ""): ModalBuilder {
