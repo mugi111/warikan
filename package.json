@@ -11,6 +11,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "commands:register": "tsx src/commands/register.ts",
+    "commands:register:production": "node dist/commands/register.js",
+    "backup": "node dist/operations/backup-command.js",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
