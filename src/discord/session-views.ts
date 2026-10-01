@@ -36,7 +36,7 @@ export function sessionDetailView(s: SessionDto, actor = "") {
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("参加者", id("members", s)), button("支出", id("expenses", s)), ...(s.status === "ACTIVE" ? [button("支出を追加", id("draft", s, "new"), ButtonStyle.Success)] : [])));
   if (s.status === "ACTIVE") rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("精算プレビュー", id("preview", s), ButtonStyle.Primary)));
   if (s.status !== "ACTIVE") rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("精算結果", id("settlement", s, ""), ButtonStyle.Primary), ...(s.status === "SETTLING" ? [button("リマインド", id("reminder", s), ButtonStyle.Secondary)] : [])));
-  if (s.status === "ACTIVE" && s.creatorDiscordUserId === actor) rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("参加者設定", id("settings", s)), button("戻る", makeCustomId("list"))));
+  if (s.status === "ACTIVE" && s.creatorDiscordUserId === actor) rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("参加者設定", id("settings", s)), button("セッション名変更", id("rename", s)), button("戻る", makeCustomId("list"))));
   else rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("戻る", makeCustomId("list"))));
   return { embeds: [embed], components: rows };
 }
@@ -102,4 +102,10 @@ export function settingsModal(customId: string, s: SessionDto): ModalBuilder {
   }
   const values = lines.join("\n") || "0, 1, 0";
   return new ModalBuilder().setCustomId(customId).setTitle("参加者の負担設定").addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("settings").setLabel("ユーザーID, Weight, 固定調整額（他の人は変更なし）").setStyle(TextInputStyle.Paragraph).setMaxLength(4000).setValue(values).setRequired(true)));
+}
+
+export function renameSessionModal(customId: string, name: string): ModalBuilder {
+  return new ModalBuilder().setCustomId(customId).setTitle("セッション名変更").addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId("name").setLabel("セッション名").setStyle(TextInputStyle.Short).setMaxLength(80).setValue(name).setRequired(true)),
+  );
 }
