@@ -30,6 +30,8 @@ export interface SessionDto {
   revision: number;
   createdAt: number;
   updatedAt: number;
+  settlingAt: number | null;
+  closedAt: number | null;
   members: MemberDto[];
   expenses: ExpenseDto[];
 }
