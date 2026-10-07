@@ -4,7 +4,7 @@ import { newDraftToken } from "./custom-id.js";
 export interface ExpenseDraft {
   token: string; owner: string; guild: string; sessionId: string; revision: number;
   expenseId?: string; title: string; amount: string; payer: string; eligible: Set<string>;
-  allEligible: boolean; memberPage: number; generation: number; expiresAt: number;
+  allEligible: boolean; memberPage: number; calculatorOpen: boolean; expression: string; generation: number; expiresAt: number;
 }
 
 export class ExpenseDraftStore {
@@ -20,6 +20,7 @@ export class ExpenseDraftStore {
       ...(expense ? { expenseId: expense.id } : {}), title: expense?.title ?? "", amount: expense ? String(expense.amount) : "",
       payer, eligible: new Set(expense?.eligibleMemberIds ?? members.map((member) => member.id)),
       allEligible: !expense, memberPage: 0, generation: 0, expiresAt: Date.now() + 15 * 60_000,
+      calculatorOpen: false, expression: expense ? String(expense.amount) : "",
     };
     this.drafts.set(draft.token, draft);
     while (this.drafts.size > this.maxDrafts) {
