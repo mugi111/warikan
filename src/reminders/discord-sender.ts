@@ -1,5 +1,6 @@
-import type { Client } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, type Client } from "discord.js";
 import type { ReminderNotice } from "../application/reminder-service.js";
+import { makeCustomId } from "../discord/custom-id.js";
 
 export class ReminderDeliveryError extends Error {
   constructor(message: string, readonly retryable: boolean) {
@@ -31,8 +32,10 @@ export class DiscordReminderSender implements ReminderSender {
       throw new ReminderDeliveryError("REMINDER_CHANNEL_GUILD_MISMATCH", false);
     }
     const sessionName = notice.sessionName.replace(/[\\`*_{}\[\]()#+\-.!|>~]/g, "\\$&");
+    const transfers = notice.groups.flatMap((group) => group.transfers);
+    if (transfers.length > 25) throw new ReminderDeliveryError("REMINDER_TOO_MANY_TRANSFERS", false);
     const sections = notice.groups.map((group) => {
-      const payments = group.transfers.map((transfer) => `  ${transfer.recipientDiscordUserId}: ${transfer.amount}`).join("\n");
+      const payments = group.transfers.map((transfer) => `  <@${transfer.recipientDiscordUserId}>へ ${transfer.amount.toLocaleString("ja-JP")}円`).join("\n");
       return `<@${group.senderDiscordUserId}>\n${payments}`;
     });
     const content = `未払いの精算リマインド: ${sessionName} (settlement v${notice.settlementVersion})\n\n${sections.join("\n\n")}`;
@@ -41,6 +44,12 @@ export class DiscordReminderSender implements ReminderSender {
     try {
       const message = await channel.send({
         content,
+        components: Array.from({ length: Math.ceil(transfers.length / 5) }, (_, row) =>
+          new ActionRowBuilder<ButtonBuilder>().addComponents(...transfers.slice(row * 5, row * 5 + 5).map((transfer) =>
+            new ButtonBuilder().setCustomId(makeCustomId("rpaid", notice.sessionId, 0, transfer.transferId.replaceAll("-", "")))
+              .setLabel("支払済みにする").setStyle(ButtonStyle.Success),
+          )),
+        ),
         allowedMentions: { parse: [], users: notice.groups.map((group) => group.senderDiscordUserId), roles: [] },
       });
       return { messageId: message.id };

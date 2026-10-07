@@ -45,6 +45,33 @@ export class SettlementService {
     });
   }
 
+  markReminderTransferPaid(scope: ServiceScope, transferId: string): { alreadyPaid: boolean; allPaid: boolean; settlement: SettlementSnapshotDto } {
+    const id = nonblank(transferId, "transferId");
+    return this.transaction(() => {
+      const { session, actor } = this.authorized(scope, false);
+      if (session.status !== "SETTLING") fail("SESSION_NOT_SETTLING", "The session is not settling.");
+      const current = this.database.prepare("SELECT id FROM settlements WHERE session_id = ? AND status = 'FINALIZED'").get(session.id) as Row | undefined;
+      if (!current) fail("SETTLEMENT_NOT_CURRENT", "There is no current finalized settlement.");
+      const settlementId = String(current.id);
+      const transfer = this.database.prepare(`SELECT t.status, sender.discord_user_id AS sender_id
+        FROM settlement_transfers t JOIN session_members sender ON sender.id = t.from_member_id AND sender.session_id = t.session_id
+        WHERE t.id = ? AND t.session_id = ? AND t.settlement_id = ?`).get(id, session.id, settlementId) as Row | undefined;
+      if (!transfer) fail("TRANSFER_NOT_FOUND", "Transfer not found in the current settlement.");
+      if (transfer.sender_id !== actor) fail("FORBIDDEN", "Only the sender can mark this transfer as paid.");
+      const alreadyPaid = transfer.status === "PAID";
+      if (!alreadyPaid) {
+        const timestamp = this.now();
+        const result = this.database.prepare("UPDATE settlement_transfers SET status = 'PAID', paid_at = ?, updated_at = ? WHERE id = ? AND session_id = ? AND settlement_id = ? AND status = 'UNPAID'")
+          .run(timestamp, timestamp, id, session.id, settlementId);
+        if (result.changes !== 1) fail("TRANSFER_NOT_FOUND", "Transfer is no longer unpaid.");
+        this.bumpSession(String(session.id), session.revision, timestamp, "SETTLING", session.settling_at as number, null);
+      }
+      const allPaid = !this.database.prepare("SELECT 1 FROM settlement_transfers WHERE session_id = ? AND settlement_id = ? AND status = 'UNPAID' LIMIT 1").get(session.id, settlementId);
+      if (allPaid) this.database.prepare("UPDATE reminder_settings SET enabled = 0, next_reminder_at = NULL, updated_at = ? WHERE session_id = ? AND settlement_id = ?").run(this.now(), session.id, settlementId);
+      return { alreadyPaid, allPaid: Boolean(allPaid), settlement: this.readSettlement(String(session.id), settlementId) };
+    });
+  }
+
   get(scope: ServiceScope, settlementId: string): SettlementSnapshotDto {
     const id = nonblank(settlementId, "settlementId");
     return this.transaction(() => {

@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, MessageFlags, PermissionFlagsBits, type Interaction, type MessageComponentInteraction } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, ComponentType, MessageFlags, PermissionFlagsBits, type Interaction, type MessageComponentInteraction } from "discord.js";
 import type { SessionService } from "../application/session-service.js";
 import type { SettlementService, SettlementSnapshotDto } from "../application/settlement-service.js";
 import type { ReminderService } from "../application/reminder-service.js";
@@ -9,7 +9,7 @@ import { ReminderDraftStore, type ReminderDraft } from "./reminder-drafts.js";
 import { balancesView, previewView, reminderDraftView, reminderFieldsModal, reminderView, settlementView, transferActionView } from "./settlement-views.js";
 import { resolveUserLabels } from "./user-labels.js";
 
-const actions = new Set(["preview","ppage","finalize","settlement","balances","transfer","paid","unpaid","invalidate","invconfirm","close","closeconfirm","reminder","remedit","remchannel","remfields","remsave","remcancel","remstop"]);
+const actions = new Set(["preview","ppage","finalize","settlement","balances","transfer","paid","unpaid","invalidate","invconfirm","close","closeconfirm","reminder","remedit","remchannel","remfields","remsave","remcancel","remstop","rpaid"]);
 const mentions = { parse: [] as never[] };
 const privateReply = { flags: MessageFlags.Ephemeral as const, allowedMentions: mentions };
 const drafts = new ReminderDraftStore();
@@ -27,6 +27,45 @@ export async function handleSettlementInteraction(services: Services, interactio
   const fail=async(content:string)=>{if(interaction.deferred||interaction.replied) await interaction.followUp({...privateReply,content}); else await interaction.reply({...privateReply,content});};
   const render=async(s:SessionDto,payload:object)=>{if(interaction.deferred||interaction.replied) await interaction.editReply({...payload,allowedMentions:mentions}); else if(interaction.isMessageComponent()) await interaction.update({...payload,allowedMentions:mentions});};
   const userError=(e:unknown)=>e instanceof ApplicationError && e.code==="REVISION_CONFLICT"?"セッションが更新されています。画面を開き直してください。":e instanceof ApplicationError && e.code==="UNPAID_TRANSFERS"?"未払いの送金があります。":e instanceof ApplicationError && e.code==="NO_UNPAID_TRANSFERS"?"未払いの送金はありません。":e instanceof ApplicationError && e.code==="REMINDER_ALREADY_SENT"?"この精算の期限通知は送信済みです。":e instanceof ApplicationError && e.code==="REMINDER_RATE_LIMITED"?"通知は現在送信できません。時間をおいて再試行してください。":e instanceof ApplicationError && e.code==="INVALID_INPUT"?"入力形式または値を確認してください。":"操作を完了できませんでした。対象と権限を確認してください。";
+  if (action === "rpaid" && interaction.isButton()) {
+    try {
+      const result = services.settlements.markReminderTransferPaid(scope, normalizeUuid(arg));
+      const session = services.sessions.getSession(scope);
+      const actionRows = interaction.message.components.filter((row) => row.type === ComponentType.ActionRow);
+      const originalIds = actionRows.flatMap((row) => row.components)
+        .map((component) => parseCustomId(component.customId ?? ""))
+        .filter((item): item is NonNullable<typeof item> => item?.action === "rpaid")
+        .map((item) => normalizeUuid(item.arg));
+      const visible = result.settlement.transfers.filter((transfer) => originalIds.includes(transfer.id));
+      const groups = new Map<string, typeof visible>();
+      for (const transfer of visible) {
+        const sender = session.members.find((member) => member.id === transfer.fromMemberId)?.discordUserId;
+        if (!sender) continue;
+        groups.set(sender, [...(groups.get(sender) ?? []), transfer]);
+      }
+      const lines = [...groups].map(([sender, transfers]) => `<@${sender}>\n${transfers.map((transfer) => {
+        const recipient = session.members.find((member) => member.id === transfer.toMemberId)?.discordUserId;
+        return `  <@${recipient}>へ ${transfer.amount.toLocaleString("ja-JP")}円  ${transfer.status === "PAID" ? "✅ 支払済み" : "[支払済みにする]"}`;
+      }).join("\n")}`);
+      const heading = result.allPaid ? "すべて支払済み" : interaction.message.content.split("\n")[0] ?? "未払いの精算リマインド";
+      const components = actionRows.map((row) => new ActionRowBuilder<ButtonBuilder>().addComponents(
+        ...row.components.filter((component) => component.type === ComponentType.Button).map((component) => {
+          const button = ButtonBuilder.from(component);
+          const item = parseCustomId(component.customId ?? "");
+          const transfer = item?.action === "rpaid" ? result.settlement.transfers.find((entry) => entry.id.replaceAll("-", "") === item.arg) : undefined;
+          if (!transfer || transfer.status === "PAID") button.setDisabled(true);
+          return button;
+        }),
+      ));
+      const messageContent = `${heading}\n\n${lines.join("\n\n")}`;
+      try { await interaction.message.edit({ content: messageContent, components }); } catch { /* Keep the DB result if the reminder message is unavailable. */ }
+      await interaction.reply({ ...privateReply, content: result.alreadyPaid ? "この送金はすでに支払済みです。" : "支払い済みに記録しました。" });
+    } catch (error) {
+      const message = error instanceof ApplicationError && error.code === "FORBIDDEN" ? "このボタンは送金者本人のみ操作できます。" : userError(error);
+      await interaction.reply({ ...privateReply, content: message });
+    }
+    return true;
+  }
   let s:SessionDto;
   try { s=services.sessions.getSession(scope); } catch(e) { await fail(userError(e)); return true; }
   if(s.revision!==revision){await fail("セッションが更新されています。画面を開き直してください。");return true;}
