@@ -124,32 +124,30 @@ function allocateExpense(
   return { expenseId: expense.id, shares };
 }
 
-function generateTransfers(balances: MemberBalance[]): SettlementTransfer[] {
-  const debtors = balances
-    .filter((balance) => balance.balance < 0)
-    .map((balance) => ({ memberId: balance.memberId, remaining: -BigInt(balance.balance) }));
-  const creditors = balances
-    .filter((balance) => balance.balance > 0)
-    .map((balance) => ({ memberId: balance.memberId, remaining: BigInt(balance.balance) }));
+const MAX_EXACT_SETTLEMENT_MEMBERS = 16;
+
+interface SettlementParticipant {
+  memberId: string;
+  balance: bigint;
+}
+
+function generateGreedyTransfers(participants: SettlementParticipant[]): SettlementTransfer[] {
+  const debtors = participants
+    .filter(({ balance }) => balance < 0n)
+    .map(({ memberId, balance }) => ({ memberId, remaining: -balance }));
+  const creditors = participants
+    .filter(({ balance }) => balance > 0n)
+    .map(({ memberId, balance }) => ({ memberId, remaining: balance }));
   const transfers: SettlementTransfer[] = [];
 
   while (debtors.length > 0 && creditors.length > 0) {
-    debtors.sort((left, right) => {
-      if (left.remaining !== right.remaining) return left.remaining > right.remaining ? -1 : 1;
-      return compareCodePoints(left.memberId, right.memberId);
-    });
-    creditors.sort((left, right) => {
-      if (left.remaining !== right.remaining) return left.remaining > right.remaining ? -1 : 1;
-      return compareCodePoints(left.memberId, right.memberId);
-    });
-
+    debtors.sort((left, right) => compareCodePoints(left.memberId, right.memberId));
+    creditors.sort((left, right) => compareCodePoints(left.memberId, right.memberId));
     const debtor = debtors[0]!;
     const creditor = creditors[0]!;
     const amount = debtor.remaining < creditor.remaining ? debtor.remaining : creditor.remaining;
     if (debtor.memberId === creditor.memberId || amount <= 0n) {
-      fail("INVARIANT_VIOLATION", "Greedy settlement produced an invalid transfer.", {
-        memberId: debtor.memberId,
-      });
+      fail("INVARIANT_VIOLATION", "Settlement produced an invalid transfer.", { memberId: debtor.memberId });
     }
 
     transfers.push({
@@ -164,10 +162,98 @@ function generateTransfers(balances: MemberBalance[]): SettlementTransfer[] {
   }
 
   if (debtors.length !== 0 || creditors.length !== 0) {
-    fail("INVARIANT_VIOLATION", "Greedy settlement did not clear all balances.");
+    fail("INVARIANT_VIOLATION", "Settlement did not clear all balances.");
+  }
+  return transfers;
+}
+
+function findMinimumTransferGroups(participants: SettlementParticipant[]): SettlementParticipant[][] {
+  const count = participants.length;
+  const fullMask = (1 << count) - 1;
+  const subsetSums = new Array<bigint>(1 << count).fill(0n);
+  for (let mask = 1; mask <= fullMask; mask += 1) {
+    const bit = mask & -mask;
+    const index = 31 - Math.clz32(bit);
+    subsetSums[mask] = subsetSums[mask ^ bit]! + participants[index]!.balance;
   }
 
-  return transfers;
+  const memo = new Map<number, number>([[0, 0]]);
+  const choice = new Map<number, number>();
+  const maximizeGroups = (mask: number): number => {
+    const known = memo.get(mask);
+    if (known !== undefined) return known;
+    const firstBit = mask & -mask;
+    let best = Number.NEGATIVE_INFINITY;
+    for (let subset = mask; subset !== 0; subset = (subset - 1) & mask) {
+      if ((subset & firstBit) === 0 || subsetSums[subset] !== 0n) continue;
+      const candidate = 1 + maximizeGroups(mask ^ subset);
+      if (candidate > best) {
+        best = candidate;
+        choice.set(mask, subset);
+      }
+    }
+    if (best === Number.NEGATIVE_INFINITY) {
+      fail("INVARIANT_VIOLATION", "No zero-sum grouping exists for balanced participants.");
+    }
+    memo.set(mask, best);
+    return best;
+  };
+
+  maximizeGroups(fullMask);
+  const groups: SettlementParticipant[][] = [];
+  for (let mask = fullMask; mask !== 0;) {
+    const subset = choice.get(mask);
+    if (subset === undefined) fail("INVARIANT_VIOLATION", "Exact settlement grouping is incomplete.");
+    groups.push(participants.filter((_, index) => (subset & (1 << index)) !== 0));
+    mask ^= subset;
+  }
+  return groups;
+}
+
+function validateTransfers(
+  participants: SettlementParticipant[],
+  transfers: SettlementTransfer[],
+): SettlementTransfer[] {
+  const remainingByMember = new Map(participants.map(({ memberId, balance }) => [memberId, balance]));
+  let transferTotal = 0n;
+  for (const transfer of transfers) {
+    const amount = BigInt(transfer.amount);
+    if (amount <= 0n || !remainingByMember.has(transfer.fromMemberId) || !remainingByMember.has(transfer.toMemberId)) {
+      fail("INVARIANT_VIOLATION", "Settlement contains an invalid transfer.", {
+        fromMemberId: transfer.fromMemberId,
+        toMemberId: transfer.toMemberId,
+      });
+    }
+    remainingByMember.set(transfer.fromMemberId, remainingByMember.get(transfer.fromMemberId)! + amount);
+    remainingByMember.set(transfer.toMemberId, remainingByMember.get(transfer.toMemberId)! - amount);
+    transferTotal += amount;
+  }
+  if ([...remainingByMember.values()].some((balance) => balance !== 0n)) {
+    fail("INVARIANT_VIOLATION", "Settlement transfers do not match participant balances.");
+  }
+  const balanceTotal = participants
+    .filter(({ balance }) => balance > 0n)
+    .reduce((sum, { balance }) => sum + balance, 0n);
+  if (transferTotal !== balanceTotal) {
+    fail("INVARIANT_VIOLATION", "Settlement transfer amounts do not conserve money.");
+  }
+  return transfers.sort((left, right) =>
+    compareCodePoints(left.fromMemberId, right.fromMemberId)
+    || compareCodePoints(left.toMemberId, right.toMemberId));
+}
+
+function generateTransfers(balances: MemberBalance[]): SettlementTransfer[] {
+  const participants = balances
+    .filter(({ balance }) => balance !== 0)
+    .map(({ memberId, balance }) => ({ memberId, balance: BigInt(balance) }))
+    .sort((left, right) => compareCodePoints(left.memberId, right.memberId));
+  if (participants.reduce((sum, participant) => sum + participant.balance, 0n) !== 0n) {
+    fail("INVARIANT_VIOLATION", "Participant balances must sum to zero.");
+  }
+  const groups = participants.length <= MAX_EXACT_SETTLEMENT_MEMBERS
+    ? findMinimumTransferGroups(participants)
+    : [participants];
+  return validateTransfers(participants, groups.flatMap(generateGreedyTransfers));
 }
 
 function validateInput(input: SettlementCalculationInput): {
