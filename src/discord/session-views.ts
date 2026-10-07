@@ -25,8 +25,8 @@ export function sessionListView(sessions: SessionDto[], page: number) {
   }
   const controls = [button("新しいセッション", makeCustomId("new"), ButtonStyle.Primary)];
   if (pages > 1) controls.push(
-    button("前へ", makeCustomId("page", "", 0, String(Math.max(0, current - 1)))).setDisabled(current === 0),
-    button("次へ", makeCustomId("page", "", 0, String(Math.min(pages - 1, current + 1)))).setDisabled(current >= pages - 1),
+    button("前へ", makeCustomId("page", "", 0, `${Math.max(0, current - 1)}_prev`)).setDisabled(current === 0),
+    button("次へ", makeCustomId("page", "", 0, `${Math.min(pages - 1, current + 1)}_next`)).setDisabled(current >= pages - 1),
   );
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...controls));
   return { embeds: [embed], components: rows };
@@ -60,8 +60,8 @@ export function memberView(s: SessionDto, page: number, actor = "") {
   const current = Math.min(page, pages - 1);
   const rows: ActionRowBuilder<any>[] = [];
   const pageControls = pages > 1 ? [
-    button("前へ", id("mpage", s, String(Math.max(0, current - 1)))).setDisabled(current === 0),
-    button("次へ", id("mpage", s, String(Math.min(pages - 1, current + 1)))).setDisabled(current >= pages - 1),
+    button("前へ", id("mpage", s, `${Math.max(0, current - 1)}_prev`)).setDisabled(current === 0),
+    button("次へ", id("mpage", s, `${Math.min(pages - 1, current + 1)}_next`)).setDisabled(current >= pages - 1),
   ] : [];
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...pageControls, button("セッションへ戻る", id("page", s, "0"))));
   if (s.creatorDiscordUserId === actor && s.status === "ACTIVE") {
@@ -77,8 +77,8 @@ export function expenseListView(s: SessionDto, page: number) {
   const rows: ActionRowBuilder<any>[] = [];
   if (items.length) rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id("expense", s, String(current))).setPlaceholder("支出を選択").addOptions(items.map((e) => ({ label: safe(e.title, 100), value: e.id.replaceAll("-", ""), description: `${e.amount.toLocaleString()}円` })))));
   const pageControls = pages > 1 ? [
-    button("前へ", id("epage", s, String(Math.max(0, current - 1)))).setDisabled(current === 0),
-    button("次へ", id("epage", s, String(Math.min(pages - 1, current + 1)))).setDisabled(current >= pages - 1),
+    button("前へ", id("epage", s, `${Math.max(0, current - 1)}_prev`)).setDisabled(current === 0),
+    button("次へ", id("epage", s, `${Math.min(pages - 1, current + 1)}_next`)).setDisabled(current >= pages - 1),
   ] : [];
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...pageControls, ...(s.status === "ACTIVE" ? [button("支出を追加", id("draft", s, "new"), ButtonStyle.Success)] : []), button("セッションへ戻る", id("page", s, "0"))));
   return { embeds: [new EmbedBuilder().setColor(accent).setTitle(`支出 · ${s.expenses.length}件`).setDescription(items.map((e) => `**${safe(e.title)}** · ${yen(e.amount)}`).join("\n") || "支出はまだありません。\n「支出を追加」から登録できます。").setFooter({ text: `合計 ${yen(s.expenses.reduce((sum, expense) => sum + expense.amount, 0))}` })], components: rows };
@@ -92,23 +92,37 @@ export function expenseDetailView(s: SessionDto, e: ExpenseDto, actor = "") {
   return { embeds: [embed], components: rows };
 }
 
-export function expenseDraftView(s: SessionDto, d: ExpenseDraft) {
+export function expenseDraftView(s: SessionDto, d: ExpenseDraft, displayNames: ReadonlyMap<string, string> = new Map()) {
   const generation = d.generation.toString(36);
   const cmd = (a: string) => makeCustomId(a, s.id, s.revision, `${d.token}_${generation}`);
-  const rows: ActionRowBuilder<any>[] = [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(button("内容・金額を入力", cmd("fields"), ButtonStyle.Primary), button("全員を対象", cmd("all"), d.allEligible ? ButtonStyle.Success : ButtonStyle.Secondary)),
-    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("payer")).setPlaceholder("支払者を選択").setMinValues(1).setMaxValues(1)),
-    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("target")).setPlaceholder("対象者を追加").setMinValues(1).setMaxValues(25)),
-    new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(new UserSelectMenuBuilder().setCustomId(cmd("untarget")).setPlaceholder("対象者から除外").setMinValues(1).setMaxValues(25)),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(button("保存", cmd("save"), ButtonStyle.Success), button("キャンセル", cmd("cancel"))),
-  ];
   const members = s.members.filter((m) => !m.removedAt);
+  const pageSize = 25;
+  const pages = Math.max(1, Math.ceil(members.length / pageSize));
+  d.memberPage = Math.max(0, Math.min(d.memberPage, pages - 1));
+  const memberPage = members.slice(d.memberPage * pageSize, (d.memberPage + 1) * pageSize);
+  const options = memberPage.map((member, index) => ({
+    label: (displayNames.get(member.id) ?? `参加者 ${d.memberPage * pageSize + index + 1}`).slice(0, 100),
+    value: member.id,
+    description: d.eligible.has(member.id) ? "現在の対象" : "対象外",
+  }));
+  const paging = pages > 1 ? [
+    button("前へ", makeCustomId("dpage", s.id, s.revision, `${d.token}_${generation}_${Math.max(0, d.memberPage - 1)}_prev`)).setDisabled(d.memberPage === 0),
+    button("次へ", makeCustomId("dpage", s.id, s.revision, `${d.token}_${generation}_${Math.min(pages - 1, d.memberPage + 1)}_next`)).setDisabled(d.memberPage >= pages - 1),
+  ] : [];
+  const rows: ActionRowBuilder<any>[] = [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(button("内容・金額を入力", cmd("fields"), ButtonStyle.Primary), button(d.allEligible ? "全員が対象" : "全員を対象", cmd("all"), d.allEligible ? ButtonStyle.Success : ButtonStyle.Secondary), ...paging),
+  ];
+  if (options.length) {
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(cmd("payer")).setPlaceholder("支払者を選択").setMinValues(1).setMaxValues(1).addOptions(options)));
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(cmd("target")).setPlaceholder("対象者を追加").setMinValues(1).setMaxValues(options.length).addOptions(options)));
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(cmd("untarget")).setPlaceholder("対象者から除外").setMinValues(1).setMaxValues(options.length).addOptions(options)));
+  }
   const payer = members.find((m) => m.id === d.payer);
   const eligible = members.filter((member) => d.eligible.has(member.id));
-  const targetSummary = d.allEligible ? "全員" : eligible.length ? `${eligible.slice(0, 8).map((member) => `<@${member.discordUserId}>`).join("、")}${eligible.length > 8 ? ` ほか${eligible.length - 8}人` : ""}` : "未選択";
   const validAmount = /^\d+$/.test(d.amount) && Number.isSafeInteger(Number(d.amount)) && Number(d.amount) > 0;
-  rows[4]!.components[0]!.setDisabled(!d.title.trim() || !validAmount || !payer || eligible.length === 0);
-  return { embeds: [new EmbedBuilder().setColor(accent).setTitle(d.expenseId ? "支出を編集" : "支出を追加").setDescription(`支出名と金額を入力し、支払者と対象者を確認してください。\n\n**${safe(d.title || "支出名 未入力")}**　${validAmount ? yen(Number(d.amount)) : "金額 未入力"}\n支払者　${payer ? `<@${payer.discordUserId}>` : "未選択"}\n対象者　${targetSummary}`)], components: rows };
+  const targetSummary = d.allEligible ? "全員" : eligible.length ? `${eligible.slice(0, 8).map((member) => `<@${member.discordUserId}>`).join("、")}${eligible.length > 8 ? ` ほか${eligible.length - 8}人` : ""}` : "未選択";
+  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("保存", cmd("save"), ButtonStyle.Success).setDisabled(!d.title.trim() || !validAmount || !payer || eligible.length === 0), button("キャンセル", cmd("cancel"))));
+  return { embeds: [new EmbedBuilder().setColor(accent).setTitle(d.expenseId ? "支出を編集" : "支出を追加").setDescription(`支出名と金額を入力し、支払者と対象者を確認してください。\n\n**${safe(d.title || "支出名 未入力")}**　${validAmount ? yen(Number(d.amount)) : "金額 未入力"}\n支払者　${payer ? `<@${payer.discordUserId}>` : "未選択"}\n対象者　${targetSummary}\n参加者候補 ${d.memberPage + 1}/${pages}ページ`)], components: rows };
 }
 
 export function fieldsModal(customId: string, title = "", amount = ""): ModalBuilder {

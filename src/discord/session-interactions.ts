@@ -1,12 +1,15 @@
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle,
-  type Interaction, type UserSelectMenuInteraction, type StringSelectMenuInteraction,
+  type Interaction,
 } from "discord.js";
 import { ApplicationError } from "../application/errors.js";
+import { logger } from "../logger.js";
 import { SessionService } from "../application/session-service.js";
 import type { MemberSettingsInput, SessionDto } from "../application/types.js";
 import { makeCustomId, parseCustomId } from "./custom-id.js";
 import { ExpenseDraftStore } from "./expense-drafts.js";
+import type { ExpenseDraft } from "./expense-drafts.js";
+import { resolveUserLabels } from "./user-labels.js";
 import { expenseDetailView, expenseDraftView, expenseListView, fieldsModal, memberView, renameSessionModal, sessionDetailView, sessionListView, settingsModal } from "./session-views.js";
 
 const drafts = new ExpenseDraftStore();
@@ -27,7 +30,14 @@ export async function handleSessionInteraction(service: SessionService, interact
     if (!interaction.inGuild() || !interaction.guildId) { await interaction.reply({ ...privateReply, content: "サーバー内で実行してください。" }); return; }
     await interaction.deferReply(privateReply);
     try { await interaction.editReply({ ...sessionListView(service.listSessions(interaction.guildId, interaction.user.id), 0), allowedMentions: mentions }); }
-    catch (error) { await interaction.editReply({ content: toUserError(error), embeds: [], components: [], allowedMentions: mentions }); }
+    catch (error) {
+      logger.error("Warikan command failed", {
+        errorType: error instanceof Error ? error.name : "unknown",
+        ...(error instanceof ApplicationError ? { errorCode: error.code } : {}),
+        ...(error instanceof Error ? { errorMessage: error.message } : {})
+      });
+      await interaction.editReply({ content: toUserError(error), embeds: [], components: [], allowedMentions: mentions });
+    }
     return;
   }
   if (!interaction.isMessageComponent() && !interaction.isModalSubmit()) return;
@@ -80,7 +90,7 @@ export async function handleSessionInteraction(service: SessionService, interact
         draft.title = interaction.fields.getTextInputValue("title").trim();
         draft.amount = interaction.fields.getTextInputValue("amount").trim();
         draft.generation += 1;
-        await interaction.editReply({ ...expenseDraftView(session, draft), allowedMentions: mentions }); return;
+        await interaction.editReply({ ...await buildExpenseDraftView(interaction, session, draft), allowedMentions: mentions }); return;
       }
       if (action === "settings") {
         if (session.creatorDiscordUserId !== actor) throw new ApplicationError("FORBIDDEN", "Only the creator can edit settings.");
@@ -125,12 +135,20 @@ export async function handleSessionInteraction(service: SessionService, interact
     if (arg !== "new" && !expense) return acknowledgeError(interaction, "支出が見つかりません。");
     if (expense && session.creatorDiscordUserId !== actor) return acknowledgeError(interaction, "対象を確認できませんでした。");
     const draft = drafts.create(actor, guild, session, expense);
-    await interaction.update({ ...expenseDraftView(session, draft), allowedMentions: mentions }); return;
+    await interaction.update({ ...await buildExpenseDraftView(interaction, session, draft), allowedMentions: mentions }); return;
   }
-  if (["payer", "target", "untarget", "all", "fields", "save", "cancel"].includes(action)) {
+  if (["payer", "target", "untarget", "all", "fields", "save", "cancel", "dpage"].includes(action)) {
     const [token, generation] = arg.split("_");
     const draft = drafts.get(token ?? "", actor, guild, session.id, revision);
     if (!draft || draft.generation.toString(36) !== generation) return acknowledgeError(interaction, "入力画面の期限が切れました。開き直してください。");
+    if (action === "dpage") {
+      const page = Number.parseInt(arg.split("_")[2] ?? "", 36);
+      const pages = Math.max(1, Math.ceil(session.members.filter((member) => !member.removedAt).length / 25));
+      if (!Number.isSafeInteger(page) || page < 0 || page >= pages) return acknowledgeError(interaction, "参加者ページを確認できません。");
+      draft.memberPage = page;
+      draft.generation += 1;
+      await interaction.update({ ...await buildExpenseDraftView(interaction, session, draft), allowedMentions: mentions }); return;
+    }
     if (action === "fields") { await interaction.showModal(fieldsModal(makeCustomId("fields", session.id, revision, `${draft.token}_${draft.generation.toString(36)}`), draft.title, draft.amount)); return; }
     if (action === "cancel") { drafts.delete(draft.token); await interaction.update({ ...sessionDetailView(session, actor), allowedMentions: mentions }); return; }
     if (action === "save") {
@@ -144,15 +162,15 @@ export async function handleSessionInteraction(service: SessionService, interact
       } catch (error) { return acknowledgeError(interaction, toUserError(error)); } return;
     }
     if (action === "all") { draft.allEligible = !draft.allEligible; draft.eligible = new Set(draft.allEligible ? session.members.filter((m) => !m.removedAt).map((m) => m.id) : []); }
-    else if ((action === "payer" || action === "target" || action === "untarget") && interaction.isUserSelectMenu()) {
-      const selected = session.members.filter((m) => !m.removedAt && interaction.values.includes(m.discordUserId));
-      if (selected.length !== interaction.values.length) return acknowledgeError(interaction, "選択したユーザーはこのセッションの参加者ではありません。");
+    else if ((action === "payer" || action === "target" || action === "untarget") && interaction.isStringSelectMenu()) {
+      const selected = session.members.filter((m) => !m.removedAt && interaction.values.includes(m.id));
+      if (selected.length !== interaction.values.length) return acknowledgeError(interaction, "セッションの参加者から選択してください。");
       if (action === "payer") draft.payer = selected[0]!.id;
       else for (const member of selected) action === "target" ? draft.eligible.add(member.id) : draft.eligible.delete(member.id);
       draft.allEligible = draft.eligible.size === session.members.filter((m) => !m.removedAt).length;
     }
     draft.generation += 1;
-    await interaction.update({ ...expenseDraftView(session, draft), allowedMentions: mentions }); return;
+    await interaction.update({ ...await buildExpenseDraftView(interaction, session, draft), allowedMentions: mentions }); return;
   }
   if (action === "settings") {
     if (session.creatorDiscordUserId !== actor || session.status !== "ACTIVE") return acknowledgeError(interaction, "対象を確認できませんでした。");
@@ -206,6 +224,17 @@ export async function handleSessionInteraction(service: SessionService, interact
 
 async function acknowledgeUpdate(interaction: Interaction): Promise<void> {
   if (interaction.isMessageComponent()) await interaction.deferUpdate();
+}
+
+async function buildExpenseDraftView(interaction: Interaction, session: SessionDto, draft: ExpenseDraft) {
+  const members = session.members.filter((member) => !member.removedAt);
+  const page = members.slice(draft.memberPage * 25, (draft.memberPage + 1) * 25);
+  const labelsByDiscordId = await resolveUserLabels(interaction.client, page.map((member) => member.discordUserId));
+  const displayNames = new Map(page.map((member, index) => [
+    member.id,
+    labelsByDiscordId.get(member.discordUserId) ?? `参加者 ${draft.memberPage * 25 + index + 1}`,
+  ]));
+  return expenseDraftView(session, draft, displayNames);
 }
 
 async function acknowledgeError(interaction: Interaction, content: string): Promise<void> {

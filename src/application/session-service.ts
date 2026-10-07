@@ -83,7 +83,7 @@ export class SessionService {
       const rows = this.database.prepare(`SELECT s.id FROM sessions s JOIN guilds g ON g.id = s.guild_id
         WHERE g.discord_guild_id = ? AND (s.creator_discord_user_id = ? OR EXISTS
           (SELECT 1 FROM session_members m WHERE m.session_id = s.id AND m.discord_user_id = ? AND m.removed_at IS NULL))
-        ORDER BY s.updated_at DESC, s.id`).all(guild, actor) as Row[];
+        ORDER BY s.updated_at DESC, s.id`).all(guild, actor, actor) as Row[];
       return rows.map((row) => this.readSession(guild, String(row.id), actor));
     });
   }
@@ -355,6 +355,11 @@ export class SessionService {
       const message = error instanceof Error ? error.message : "";
       if (/SQLITE_BUSY|database is locked/i.test(message)) throw new ApplicationError("STORAGE_BUSY", "Storage is busy; retry the operation.");
       if (message.includes("SQLITE_CONSTRAINT")) throw new ApplicationError("INVALID_INPUT", "The operation violates a data constraint.");
+      logger.error("Session database transaction failed", {
+        errorType: error instanceof Error ? error.name : "unknown",
+        ...(error instanceof Error ? { errorMessage: error.message } : {}),
+        ...(typeof error === "object" && error !== null && "code" in error ? { errorCode: String(error.code) } : {})
+      });
       throw new ApplicationError("INVALID_INPUT", "The operation could not be completed.");
     }
   }

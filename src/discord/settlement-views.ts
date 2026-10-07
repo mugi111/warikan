@@ -24,18 +24,24 @@ export function previewView(s: SessionDto, preview: SettlementPreviewDto, actor:
   ].join("\n\n");
   const embed = new EmbedBuilder().setColor(accent).setTitle("精算プレビュー").setDescription(`今回の支出 ${yen(preview.totalAmount)}\n\n${body}`).setFooter({ text: `確定予定 第${preview.nextVersion}版 · ${p + 1}/${pages}ページ` });
   const components: ActionRowBuilder<any>[] = [];
-  if (pages > 1) components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("前へ", id("ppage", s, Math.max(0, p - 1).toString(36))).setDisabled(p === 0), button("次へ", id("ppage", s, Math.min(pages - 1, p + 1).toString(36))).setDisabled(p >= pages - 1)));
+  if (pages > 1) components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("前へ", id("ppage", s, `${Math.max(0, p - 1).toString(36)}_prev`)).setDisabled(p === 0), button("次へ", id("ppage", s, `${Math.min(pages - 1, p + 1).toString(36)}_next`)).setDisabled(p >= pages - 1)));
   components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...(s.creatorDiscordUserId === actor ? [button("この内容で精算を確定", id("finalize", s), ButtonStyle.Primary)] : []), button("セッションへ戻る", id("page", s))));
   return { embeds: [embed], components };
 }
 
-export function settlementView(s: SessionDto, settlement: SettlementSnapshotDto, page: number, actor: string) {
+export function settlementView(s: SessionDto, settlement: SettlementSnapshotDto, page: number, actor: string, userLabels: ReadonlyMap<string, string> = new Map()) {
   const pages = Math.max(1, Math.ceil(settlement.transfers.length / 10)); const p = Math.max(0, Math.min(page, pages - 1));
   const transfers = settlement.transfers.slice(p * 10, p * 10 + 10);
   const unpaid = settlement.transfers.filter((t)=>t.status === "UNPAID").length;
-  const controls: ActionRowBuilder<any>[] = transfers.length ? [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id("transfer", s, `${settlement.id.replaceAll("-", "")}_${p.toString(36)}`)).setPlaceholder("一覧から送金を選択").addOptions(transfers.map((t, index) => ({ label: `送金 ${p * 10 + index + 1}`, value: t.id.replaceAll("-", ""), description: `${t.amount.toLocaleString()}円 · ${t.status === "PAID" ? "支払済み" : "未払い"}` }))))] : [];
+  const controls: ActionRowBuilder<any>[] = transfers.length ? [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(id("transfer", s, `${settlement.id.replaceAll("-", "")}_${p.toString(36)}`)).setPlaceholder("一覧から送金を選択").addOptions(transfers.map((t) => {
+    const fromMember = s.members.find((member) => member.id === t.fromMemberId);
+    const toMember = s.members.find((member) => member.id === t.toMemberId);
+    const from = userLabels.get(fromMember?.discordUserId ?? "") ?? "参加者";
+    const to = userLabels.get(toMember?.discordUserId ?? "") ?? "参加者";
+    return { label: `${from} → ${to} · ${yen(t.amount)}`.slice(0, 100), value: t.id.replaceAll("-", ""), description: t.status === "PAID" ? "支払済み" : "未払い" };
+  })))] : [];
   const navigation = [button("残高を確認", id("balances", s, settlement.id.replaceAll("-", "")), ButtonStyle.Primary)];
-  if (pages > 1) navigation.push(button("前へ", id("settlement", s, `${settlement.id.replaceAll("-", "")}_${Math.max(0,p-1).toString(36)}`)).setDisabled(p===0), button("次へ", id("settlement", s, `${settlement.id.replaceAll("-", "")}_${Math.min(pages-1,p+1).toString(36)}`)).setDisabled(p>=pages-1));
+  if (pages > 1) navigation.push(button("前へ", id("settlement", s, `${settlement.id.replaceAll("-", "")}_${Math.max(0,p-1).toString(36)}_prev`)).setDisabled(p===0), button("次へ", id("settlement", s, `${settlement.id.replaceAll("-", "")}_${Math.min(pages-1,p+1).toString(36)}_next`)).setDisabled(p>=pages-1));
   controls.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...navigation));
   if (s.status === "SETTLING" && s.creatorDiscordUserId === actor) controls.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("リマインド", id("reminder",s), ButtonStyle.Primary), button("精算を解除", id("invalidate",s,settlement.id.replaceAll("-","")), ButtonStyle.Danger), ...(unpaid === 0 ? [button("完了", id("close",s,settlement.id.replaceAll("-","")), ButtonStyle.Success)] : [])));
   controls.push(new ActionRowBuilder<ButtonBuilder>().addComponents(button("セッションへ戻る", id("page",s))));
@@ -49,8 +55,8 @@ export function balancesView(s: SessionDto, settlement: SettlementSnapshotDto, p
   const balances = settlement.balances.slice(p * 10, p * 10 + 10);
   const embed = new EmbedBuilder().setColor(accent).setTitle("精算残高").setDescription(balances.map((b)=>`${memberName(s,b.memberId)} · 負担 ${yen(b.shareAmount)} · 立替 ${yen(b.paidAmount)} · ${b.balance > 0 ? "受取" : b.balance < 0 ? "支払" : "精算不要"} ${yen(Math.abs(b.balance))}`).join("\n") || "残高はありません").setFooter({text:`${p+1}/${pages}ページ`});
   const navigation = pages > 1 ? [
-    button("前へ", id("balances", s, `${settlement.id.replaceAll("-","")}_${Math.max(0,p-1).toString(36)}`)).setDisabled(p === 0),
-    button("次へ", id("balances", s, `${settlement.id.replaceAll("-","")}_${Math.min(pages-1,p+1).toString(36)}`)).setDisabled(p >= pages - 1),
+    button("前へ", id("balances", s, `${settlement.id.replaceAll("-","")}_${Math.max(0,p-1).toString(36)}_prev`)).setDisabled(p === 0),
+    button("次へ", id("balances", s, `${settlement.id.replaceAll("-","")}_${Math.min(pages-1,p+1).toString(36)}_next`)).setDisabled(p >= pages - 1),
   ] : [];
   navigation.push(button("送金一覧へ", id("settlement", s, `${settlement.id.replaceAll("-","")}_0`)));
   return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(...navigation)] };
