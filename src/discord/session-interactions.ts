@@ -194,11 +194,13 @@ export async function handleSessionInteraction(service: SessionService, interact
     try { const updated = service.addMembers(scope, interaction.values, { expectedRevision: revision }); await interaction.update({ ...memberView(updated, 0, actor), allowedMentions: mentions }); }
     catch (error) { return acknowledgeError(interaction, toUserError(error)); } return;
   }
-  if (action === "remove" && interaction.isStringSelectMenu()) {
+  if (action === "remove" && interaction.isUserSelectMenu()) {
     if (actor !== session.creatorDiscordUserId || session.status !== "ACTIVE") return acknowledgeError(interaction, "対象を確認できませんでした。");
-    const memberId = interaction.values[0]; if (!memberId) return acknowledgeError(interaction, "参加者を選択してください。");
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId(makeCustomId("rmconfirm", session.id, revision, memberId.replaceAll("-", ""))).setLabel("削除を確定").setStyle(ButtonStyle.Danger));
-    await interaction.reply({ ...privateReply, content: "この参加者をセッションから削除しますか？", components: [row] }); return;
+    const selected = interaction.values[0];
+    const member = session.members.find((item) => item.discordUserId === selected && !item.removedAt);
+    if (!member) return acknowledgeError(interaction, "このセッションの参加者を選択してください。");
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId(makeCustomId("rmconfirm", session.id, revision, member.id.replaceAll("-", ""))).setLabel("削除する").setStyle(ButtonStyle.Danger), new ButtonBuilder().setCustomId(makeCustomId("members", session.id, revision)).setLabel("キャンセル").setStyle(ButtonStyle.Secondary));
+    await interaction.reply({ ...privateReply, content: `<@${selected}> をセッションから削除しますか？`, components: [row] }); return;
   }
   if (action === "rmconfirm") {
     if (actor !== session.creatorDiscordUserId || session.status !== "ACTIVE") return acknowledgeError(interaction, "対象を確認できませんでした。");
@@ -207,8 +209,10 @@ export async function handleSessionInteraction(service: SessionService, interact
   }
   if (action === "delete") {
     if (actor !== session.creatorDiscordUserId || session.status !== "ACTIVE") return acknowledgeError(interaction, "対象を確認できませんでした。");
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId(makeCustomId("delconfirm", session.id, revision, arg)).setLabel("削除を確定").setStyle(ButtonStyle.Danger));
-    await interaction.reply({ ...privateReply, content: "この支出を削除しますか？", components: [row] }); return;
+    const expense = session.expenses.find((item) => item.id.replaceAll("-", "") === arg);
+    if (!expense) return acknowledgeError(interaction, "支出が見つかりません。");
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId(makeCustomId("delconfirm", session.id, revision, arg)).setLabel("削除する").setStyle(ButtonStyle.Danger), new ButtonBuilder().setCustomId(makeCustomId("expenses", session.id, revision)).setLabel("キャンセル").setStyle(ButtonStyle.Secondary));
+    await interaction.reply({ ...privateReply, content: `「${expense.title}」(${expense.amount.toLocaleString()}円)を削除しますか？`, components: [row] }); return;
   }
   if (action === "delconfirm") {
     if (actor !== session.creatorDiscordUserId || session.status !== "ACTIVE") return acknowledgeError(interaction, "対象を確認できませんでした。");
