@@ -137,10 +137,30 @@ export async function handleSessionInteraction(service: SessionService, interact
     const draft = drafts.create(actor, guild, session, expense);
     await interaction.update({ ...await buildExpenseDraftView(interaction, session, draft), allowedMentions: mentions }); return;
   }
-  if (["payer", "target", "untarget", "all", "fields", "save", "cancel", "dpage"].includes(action)) {
+  if (["payer", "target", "untarget", "all", "fields", "save", "cancel", "dpage", "calc"].includes(action)) {
     const [token, generation] = arg.split("_");
     const draft = drafts.get(token ?? "", actor, guild, session.id, revision);
     if (!draft || draft.generation.toString(36) !== generation) return acknowledgeError(interaction, "入力画面の期限が切れました。開き直してください。");
+    if (action === "calc") {
+      const key = arg.split("_")[2] ?? "";
+      if (key === "open") { draft.expression = draft.amount; draft.calculatorOpen = true; }
+      else if (key === "close") { draft.calculatorOpen = false; }
+      else if (key === "clear") { draft.expression = ""; }
+      else if (key === "back") { draft.expression = draft.expression.slice(0, -1); }
+      else if (key === "equals") {
+        const expression = draft.expression;
+        if (!/^\d+(?:[+×]\d+)*$/.test(expression)) return acknowledgeError(interaction, "金額の式を確認してください。");
+        const sum = expression.split("+").reduce((total, term) => total + term.split("×").reduce((product, value) => product * BigInt(value), 1n), 0n);
+        if (sum <= 0n || sum > BigInt(Number.MAX_SAFE_INTEGER)) return acknowledgeError(interaction, "合計金額が入力できる範囲を超えています。");
+        draft.amount = String(sum); draft.expression = draft.amount; draft.calculatorOpen = false;
+      } else if (/^(?:\d{1,2}|add|mul)$/.test(key) && draft.expression.length < 32) {
+        const value = key === "add" ? "+" : key === "mul" ? "×" : key;
+        if (/^[+×]$/.test(value)) { if (/\d$/.test(draft.expression)) draft.expression += value; }
+        else draft.expression += value;
+      }
+      draft.generation += 1;
+      await interaction.update({ ...await buildExpenseDraftView(interaction, session, draft), allowedMentions: mentions }); return;
+    }
     if (action === "dpage") {
       const page = Number.parseInt(arg.split("_")[2] ?? "", 36);
       const pages = Math.max(1, Math.ceil(session.members.filter((member) => !member.removedAt).length / 25));

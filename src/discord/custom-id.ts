@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-const actions = new Set(["list", "page", "open", "create", "new", "members", "mpage", "add", "remove", "rmconfirm", "settings", "rename", "expenses", "epage", "expense", "draft", "dpage", "payer", "target", "untarget", "all", "fields", "save", "cancel", "edit", "delete", "delconfirm", "preview", "ppage", "finalize", "settlement", "balances", "transfer", "paid", "unpaid", "invalidate", "invconfirm", "close", "closeconfirm", "reminder", "remedit", "remchannel", "remfields", "remsave", "remcancel", "remstop", "rpaid"]);
+const actions = new Set(["list", "page", "open", "create", "new", "members", "mpage", "add", "remove", "rmconfirm", "settings", "rename", "expenses", "epage", "expense", "draft", "dpage", "payer", "target", "untarget", "all", "fields", "save", "cancel", "edit", "delete", "delconfirm", "preview", "ppage", "finalize", "settlement", "balances", "transfer", "paid", "unpaid", "invalidate", "invconfirm", "close", "closeconfirm", "reminder", "remedit", "remchannel", "remfields", "remsave", "remcancel", "remstop", "rpaid", "calc"]);
 
 export interface CustomId { action: string; sessionId: string; revision: number; arg: string }
 

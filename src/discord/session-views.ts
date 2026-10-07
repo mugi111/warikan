@@ -95,6 +95,7 @@ export function expenseDetailView(s: SessionDto, e: ExpenseDto, actor = "") {
 export function expenseDraftView(s: SessionDto, d: ExpenseDraft, displayNames: ReadonlyMap<string, string> = new Map()) {
   const generation = d.generation.toString(36);
   const cmd = (a: string) => makeCustomId(a, s.id, s.revision, `${d.token}_${generation}`);
+  const calc = (key: string) => makeCustomId("calc", s.id, s.revision, `${d.token}_${generation}_${key}`);
   const members = s.members.filter((m) => !m.removedAt);
   const pageSize = 25;
   const pages = Math.max(1, Math.ceil(members.length / pageSize));
@@ -110,8 +111,14 @@ export function expenseDraftView(s: SessionDto, d: ExpenseDraft, displayNames: R
     button("次へ", makeCustomId("dpage", s.id, s.revision, `${d.token}_${generation}_${Math.min(pages - 1, d.memberPage + 1)}_next`)).setDisabled(d.memberPage >= pages - 1),
   ] : [];
   const rows: ActionRowBuilder<any>[] = [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(button("内容・金額を入力", cmd("fields"), ButtonStyle.Primary), button(d.allEligible ? "全員が対象" : "全員を対象", cmd("all"), d.allEligible ? ButtonStyle.Success : ButtonStyle.Secondary), ...paging),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(button("内容・金額を入力", cmd("fields"), ButtonStyle.Primary), button("電卓", calc("open")), button(d.allEligible ? "全員が対象" : "全員を対象", cmd("all"), d.allEligible ? ButtonStyle.Success : ButtonStyle.Secondary), ...paging),
   ];
+  if (d.calculatorOpen) {
+    const keypad = [["7", "8", "9", "mul"], ["4", "5", "6", "add"], ["1", "2", "3", "back"], ["0", "00", "clear", "equals"]];
+    const labels: Record<string, string> = { mul: "×", add: "+", back: "⌫", clear: "C", equals: "=" };
+    const calculatorRows = keypad.map((keys) => new ActionRowBuilder<ButtonBuilder>().addComponents(...keys.map((key) => button(labels[key] ?? key, calc(key), key === "equals" ? ButtonStyle.Success : ButtonStyle.Secondary))));
+    return { embeds: [new EmbedBuilder().setColor(accent).setTitle("金額の電卓").setDescription(`**${safe(d.expression || "0", 40)}**\n\n${d.expression.includes("+") || d.expression.includes("×") ? "式を入力して「=」で合計を反映します。" : "円単位で入力できます。"}`)], components: [...calculatorRows, new ActionRowBuilder<ButtonBuilder>().addComponents(button("入力画面へ戻る", calc("close"), ButtonStyle.Primary))] };
+  }
   if (options.length) {
     rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(cmd("payer")).setPlaceholder("支払者を選択").setMinValues(1).setMaxValues(1).addOptions(options)));
     rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(cmd("target")).setPlaceholder("対象者を追加").setMinValues(1).setMaxValues(options.length).addOptions(options)));
