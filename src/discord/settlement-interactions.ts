@@ -73,7 +73,19 @@ export async function handleSettlementInteraction(services: Services, interactio
   const checkSettlement=(sid:string)=>{const st=current();if(st.id.replaceAll("-","")!==sid)throw new ApplicationError("SETTLEMENT_NOT_CURRENT","Stale settlement.");return st;};
   try {
     if((action==="preview"||action==="ppage") && interaction.isButton()) { if(s.status!=="ACTIVE") throw new Error(); const p=services.settlements.preview(scope); const page=action==="ppage"?Number.parseInt(arg,36):0; await interaction.update({...previewView(s,p,actor,Number.isSafeInteger(page)?page:0),allowedMentions:mentions}); return true; }
-    if(action==="finalize" && interaction.isButton()) { if(s.creatorDiscordUserId!==actor) throw new Error(); const result=services.settlements.finalize(scope,{expectedRevision:revision}); const updated=services.sessions.getSession(scope); const text=result.becameAllPaid?"精算を確定しました。送金はありません。すべて支払い済みです。":"精算を確定しました。"; await updateSettlementView(interaction,updated,result.settlement,0,actor,{content:text}); return true; }
+    if(action==="finalize" && interaction.isButton()) {
+      if(s.creatorDiscordUserId!==actor) throw new Error();
+      const result=services.settlements.finalize(scope,{expectedRevision:revision});
+      const updated=services.sessions.getSession(scope);
+      const text=result.becameAllPaid?"精算を確定しました。送金はありません。すべて支払い済みです。":"精算を確定しました。";
+      await updateSettlementView(interaction,updated,result.settlement,0,actor,{content:text});
+      try {
+        await sendSettlementNotice(interaction, updated, result.settlement);
+      } catch {
+        await interaction.followUp({...privateReply,content:"精算は確定しましたが、このチャンネルへの通知に失敗しました。Botの送信権限を確認してください。"}).catch(() => undefined);
+      }
+      return true;
+    }
     if(action==="settlement" && interaction.isButton()) { const st=s.status==="CLOSED"?services.settlements.list(scope)[0]:current(); if(!st)throw new Error(); const [hex,pageText]=arg.split("_"); if(hex && st.id.replaceAll("-","")!==hex)throw new Error(); const p=pageText?Number.parseInt(pageText,36):0; await updateSettlementView(interaction,s,st,Number.isSafeInteger(p)?p:0,actor); return true; }
     if(action==="balances" && interaction.isButton()) { const [hex,pageText]=arg.split("_"); const st=checkSettlement(hex??""); const page=pageText?Number.parseInt(pageText,36):0; await interaction.update({...balancesView(s,st,Number.isSafeInteger(page)?page:0),allowedMentions:mentions}); return true; }
     if(action==="transfer" && interaction.isStringSelectMenu()) { const st=checkSettlement(arg.split("_")[0]!); const transfer=st.transfers.find(t=>t.id.replaceAll("-","")===interaction.values[0]); if(!transfer)throw new Error(); const member=(mid:string)=>s.members.find(m=>m.id===mid)?.discordUserId; if(actor!==s.creatorDiscordUserId&&actor!==member(transfer.fromMemberId)&&actor!==member(transfer.toMemberId))throw new Error(); await interaction.update({...transferActionView(s,st,transfer.id.replaceAll("-","")),allowedMentions:mentions}); return true; }
@@ -111,3 +123,32 @@ async function buildSettlementView(interaction: MessageComponentInteraction, ses
 
 function normalizeUuid(v:string):string{if(!/^[0-9a-f]{32}$/i.test(v))throw new Error();return `${v.slice(0,8)}-${v.slice(8,12)}-${v.slice(12,16)}-${v.slice(16,20)}-${v.slice(20)}`;}
 function parseJst(value:string):number|undefined{if(!value)return undefined;const m=/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(value);if(!m)throw new ApplicationError("INVALID_INPUT","Enter a future JST time as YYYY-MM-DD HH:mm.");const [year,month,day,hour,minute]=m.slice(1).map(Number);const utc=Date.UTC(year!,month!-1,day!,hour!-9,minute!);const date=new Date(utc);if(date.getUTCFullYear()!==year||date.getUTCMonth()!==month!-1||date.getUTCDate()!==day||date.getUTCHours()!==hour!-9||date.getUTCMinutes()!==minute)throw new ApplicationError("INVALID_INPUT","Enter a valid calendar time.");if(utc<=Date.now())throw new ApplicationError("INVALID_INPUT","Reminder time must be in the future.");return utc;}
+
+async function sendSettlementNotice(interaction: MessageComponentInteraction, session: SessionDto, settlement: SettlementSnapshotDto): Promise<void> {
+  const channel = interaction.channel;
+  const botMember = interaction.guild?.members.me;
+  if (!channel?.isTextBased() || !("send" in channel) || !("guildId" in channel) || channel.guildId !== interaction.guildId || !botMember || !channel.permissionsFor(botMember)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+    throw new Error("Settlement notice channel is unavailable.");
+  }
+  const transfers = settlement.transfers;
+  const participants = [...new Set(transfers.flatMap((transfer) => [
+    session.members.find((member) => member.id === transfer.fromMemberId)?.discordUserId,
+    session.members.find((member) => member.id === transfer.toMemberId)?.discordUserId,
+  ].filter((id): id is string => Boolean(id))))];
+  const details = transfers.map((transfer) => {
+    const from = session.members.find((member) => member.id === transfer.fromMemberId)?.discordUserId;
+    const to = session.members.find((member) => member.id === transfer.toMemberId)?.discordUserId;
+    return from && to ? `<@${from}> → <@${to}> · ${transfer.amount.toLocaleString("ja-JP")}円` : `${transfer.amount.toLocaleString("ja-JP")}円`;
+  });
+  const header = `精算が確定しました: ${session.name}（第${settlement.version}版）\n合計 ${settlement.totalAmount.toLocaleString("ja-JP")}円 · 送金 ${transfers.length}件`;
+  let content = header;
+  for (let index = 0; index < details.length; index++) {
+    const next = `${content}\n${details[index]}`;
+    if (next.length > 1900) {
+      content += `\nほか ${details.length - index}件。詳細はBotの精算画面をご確認ください。`;
+      break;
+    }
+    content = next;
+  }
+  await channel.send({ content, allowedMentions: { parse: [], users: participants, roles: [] } });
+}
